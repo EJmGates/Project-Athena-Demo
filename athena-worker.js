@@ -2,7 +2,9 @@
 import { loadPyodide } from "./pyodide/pyodide.mjs";
 
 async function readAsset(path) {
-  const response = await fetch(new URL(path, self.location.href));
+  const url = new URL(path, self.location.href);
+  url.search = self.location.search;
+  const response = await fetch(url);
   if (!response.ok) throw new Error(path + " could not be loaded.");
   return response;
 }

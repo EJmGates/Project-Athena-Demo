@@ -1211,7 +1211,7 @@ function renderSide(){
    +'<nav aria-label="Primary"><ul class="g-nav-list">'+items.map(function(x){var dis=(x[0]==="data"&&!S.bq)||(x[0]==="cockpit"&&!(S.upload&&S.upload.ok))||(x[0]==="insights"&&!S.result&&!(S.updSnap&&S.updSnap.result));
       return '<li><button class="g-nav-btn" type="button" id="s-'+x[0]+'" data-go="'+x[0]+'"'+((S.cockpit?x[0]==='cockpit':(S.page==='full-insights'?'insights':S.page)===x[0])?' aria-current="page"':'')+(dis?' disabled':'')+'>'+gIcon(GI[x[0]]||GI.data)+'<span>'+esc(x[1])+'</span></button>'+((x[0]==='data'&&S.upload&&S.upload.ok)?modificationButton('data'):'')+((x[0]==='cockpit'&&S.cockpitChosen)?modificationButton('cockpit'):'')+(x[0]==='insights'?'<ul id="g-insights-nav" hidden></ul>':'')+'</li>'+((x[0]==='insights'&&(S.result||(S.updSnap&&S.updSnap.result)))?'<li class="g-nav-sub"><button class="g-nav-btn g-nav-sub-btn" type="button" id="s-datasum" aria-haspopup="dialog" aria-expanded="'+(S.modal&&S.modal.tab==='datasum'?'true':'false')+'">'+gIcon('M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1zM4 10h16M10 10v10',16)+'<span>Data analyzed</span></button></li>':'');}).join('')
    +'<li><button class="g-nav-btn" type="button" id="s-settings" aria-haspopup="dialog"'+(S.modal?' aria-expanded="true"':' aria-expanded="false"')+'>'+gIcon(GI.settings,18,'<circle cx="12" cy="12" r="3"/>')+'<span>Settings</span></button></li></ul></nav>'
-   +'<div class="g-sidebar-footer"><span>Session only</span>'+((S.config||S.bq||S.wiz||S.wizDraft||S.newWizDraft||S.staged||S.sampleSet)?'<button class="g-linkbtn" id="s-end" type="button">End session</button>':'')+'</div>';
+   +'<div class="g-sidebar-footer"><span>Session only</span>'+((S.config||S.bq||S.wiz||S.wizDraft||S.newWizDraft||S.staged||S.sampleSet)?'<button class="btn secondary pill-action" id="s-end" type="button">End session</button>':'')+'</div>';
 }
 function gDirText(d){return {lower_is_better:"Lower is better",higher_is_better:"Higher is better",within_bounds:"Within bounds",monitor_only:"Monitor only"}[d]||"";}
 /* One-word journey status. Exported will be added when an export exists. */
@@ -1330,7 +1330,7 @@ function scrollCockpitDrag(drag){
  if(!cockpitDragAvailable(drag.control)||!drag.control.isConnected){finishCockpitDrag(false);return;}
  var box=drag.control.getBoundingClientRect(), form=drag.control.closest('#cockpit-form');
  if(drag.control.dataset.dailyChoice){
-   var limits=chartFilter.panel.getBoundingClientRect();
+   var limits=drag.control.closest('.g-filter-scroll').getBoundingClientRect();
    if(drag.x>=box.left&&drag.x<=box.right){
      drag.control.scrollTop+=cockpitDragScrollStep(drag.y,Math.max(box.top,limits.top),Math.min(box.bottom,limits.bottom));
      previewCockpitDragAt(drag,drag.x,drag.y);
@@ -1524,13 +1524,24 @@ function dsSchema(v){var names=v.columns.map(function(c){return c.name;}),loaded
  return h+'<p class="ds-pii" role="note"><strong>PII warning:</strong> include columns with personal information only if needed.</p></section>';}
 function dsRemoveBtn(v){return v.tier==='primary'?'<button type="button" class="ds-remove" id="dataset-remove">Remove dataset</button>':'<button type="button" class="ds-remove" id="optional-dialog-remove" data-optional-remove="'+v.id+'">Remove dataset</button>';}
 function dsFileInput(v){return '<input class="sr" id="'+v.input+'" type="file" accept=".csv,text/csv"'+(v.tier==='optional'?' tabindex="-1" aria-label="Choose '+esc(v.label)+' CSV"':'')+'>';}
-function dsDropzone(v){return '<div class="g-dropzone-container" id="'+v.drop+'"><h3>Drop your CSV here</h3>'+(v.tier==='primary'?'<label class="g-btn-browse-file" for="file">Choose a file</label>':'<button type="button" class="g-btn-browse-file" id="optional-browse"'+(v.busy?' disabled':'')+'>Choose a file</button>')+'</div>';}
+function samplePicker(kind,disabled=false){
+ const configuration=kind==='cfg',id=kind+'-sample',verb=configuration?'Load':'Upload',noun=configuration?'configuration':'dataset';
+ const trigger=configuration?'Load sample configuration':'Upload sample';
+ return '<button type="button" class="btn" id="'+id+'-trigger" popovertarget="'+id+'-panel" aria-controls="'+id+'-panel" aria-haspopup="dialog"'+(disabled?' disabled':'')+'>'+trigger+'</button>'
+  +'<div class="g-chart-popover ds-sample-panel" id="'+id+'-panel" popover role="dialog" aria-label="'+verb+' sample '+noun+'">'
+  +['Happy','Stress'].map(set=>'<button type="button" class="btn" data-'+(configuration?'config':'dataset')+'-sample="'+set.toLowerCase()+'">'+verb+' '+set+' '+noun+'</button>').join('')+'</div>';
+}
+function dsDropzone(v){
+ return '<div class="g-dropzone-container" id="'+v.drop+'"><h3>Drop your CSV here</h3><div class="ds-upload-actions">'
+  +'<button type="button" class="btn g-btn-browse-file g-compact-chart-control" id="'+v.browse+'"'+(v.busy?' disabled':'')+'>Choose a file</button>'
+  +samplePicker('ds',v.busy)+'</div></div>';
+}
 function dsDialog(v){var u=v.u,h='';
- if(u){h+='<section class="ds-file-card"><div class="ds-file-top"><div class="ds-file-id"><strong class="ds-filename">'+esc(v.file)+'</strong></div><div class="ds-file-actions"><button type="button" class="ds-replace" id="'+v.browse+'"'+(v.busy?' disabled':'')+'>Replace file</button>'+dsRemoveBtn(v)+'</div></div>'+dsTiles(v)+'</section>'+dsFindings(u);
+ if(u){h+='<section class="ds-file-card"><div class="ds-file-top"><div class="ds-file-id"><strong class="ds-filename">'+esc(v.file)+'</strong></div><div class="ds-file-actions"><button type="button" class="ds-replace" id="'+v.browse+'"'+(v.busy?' disabled':'')+'>Replace file</button>'+samplePicker('ds',v.busy)+dsRemoveBtn(v)+'</div></div>'+dsTiles(v)+'</section>'+dsFindings(u);
   if(v.tier==='optional'&&u.diagnostic_count)h+='<section class="ds-findings"><h3>File findings</h3><p class="muted">Showing '+u.diagnostics.length+' of '+n0(u.diagnostic_count)+' findings.'+(u.remaining_examples?' '+n0(u.remaining_examples)+' more are not shown.':'')+'</p><ol class="optional-findings">'+u.diagnostics.map(function(f){return '<li>Record '+n0(f.source_row)+' · '+esc(f.field)+': '+esc(f.message)+'</li>';}).join('')+'</ol></section>';
   if(v.tier==='optional')h+=(u.issues||[]).map(function(i){return '<p class="notice" role="alert">'+esc(i.message)+'</p>';}).join('');}
  else h+=dsDropzone(v);
- h+=dsSchema(v)+dsFileInput(v);
+ h+='<p class="ds-sample-status" id="ds-sample-status" role="status"></p>'+dsSchema(v)+dsFileInput(v);
  if(v.busy)h+='<p role="status">'+busyLabel('Adding and checking '+(v.pendingFile||'your file')+'\u2026')+'</p>';
  if(v.error)h+='<p class="notice'+(v.tier==='optional'?' optional-dialog-error':'')+'" role="alert">'+esc(v.error)+'</p>';
  return h;}
@@ -1647,7 +1658,19 @@ function eventBadge(event,x,left,right,laneEnds){
   }
   return null;
 }
-function gLine(R,events=[]){
+function runValueGrid(low,high,y,left,right){
+  var step=(high-low)/6;
+  return Array.from({length:step?7:1},(_,index)=>{
+    var value=index===6?high:low+step*index,at=y(value).toFixed(2);
+    return '<line class="gc-grid g-run-grid" x1="'+left+'" x2="'+right+'" y1="'+at+'" y2="'+at+'"/>'
+      +'<text class="g-run-tick" x="'+(left-8)+'" y="'+(+at+4)+'" text-anchor="end">'+esc(chartValue(value,step))+'</text>';
+  }).join('');
+}
+function runDateTick(at,bottom,label,anchor='middle'){
+  return '<path class="g-run-axis" d="M'+at+' '+bottom+'v4"/>'
+    +'<text class="g-run-tick" x="'+at+'" y="'+(bottom+20)+'" text-anchor="'+anchor+'">'+esc(label)+'</text>';
+}
+function gLine(R,events=[],period=null){
   var days=(R.by_day||[]).filter(function(d){return d.value!==null;}),t=xHasTarget(R),datedTarget=targetFor(R);
   if(!days.length)return '<p>No daily values are available for the selected dates.</p>';
   var direction=R.analysis_setup?.direction||R.metric?.direction;
@@ -1655,7 +1678,7 @@ function gLine(R,events=[]){
     within_bounds:["↕","Values within the applicable range are favorable"]}[direction];
   var cueHtml=cue?'<p class="muted g-trend-direction"><span aria-hidden="true">'+cue[0]+'</span> '+esc(cue[1])+'.</p>':'';
   if(datedTarget&&days.some(function(d){return datedTarget(d.key)!==t;}))t=null;
-  if(days.length===1)return cueHtml+'<p>One day has an observed value. '+esc(days[0].key)+' · '+durationNumber(days[0].value,false)+' '+durationUnitSymbol()
+  if(days.length===1&&!period)return cueHtml+'<p>One day has an observed value. '+esc(days[0].key)+' · '+durationNumber(days[0].value,false)+' '+durationUnitSymbol()
     +' ('+n0(days[0].count)+' eligible observations).</p>';
   var W=900,H=events.length?306:270,l=78,r=84,tp=events.length?52:16,b=44,vals=days.map(function(d){return d.value;}).concat(t!==null?[t]:[]);
   var bands=[],assessment=R.target_assessment,firstObserved=days[0].key,lastObserved=days[days.length-1].key;
@@ -1679,7 +1702,7 @@ function gLine(R,events=[]){
     if(mn>=scale[0])lo=Math.max(lo,scale[0]);
     if(mx<=scale[1])hi=Math.min(hi,scale[1]);
   }
-  var start=days[0].key,end=days[days.length-1].key,eventDays=new Map();
+  var start=period?.start||days[0].key,end=period?.end||days[days.length-1].key,eventDays=new Map();
   events.forEach(function(event){
     if(event.date<start)start=event.date;
     if(event.date>end)end=event.date;
@@ -1687,17 +1710,23 @@ function gLine(R,events=[]){
     eventDays.get(event.date).labels.push(event.details||event.type);
   });
   var firstDay=Date.parse(start),daySpan=Date.parse(end)-firstDay;
-  function sx(day){return l+(W-l-r)*(Date.parse(day)-firstDay)/daySpan;}function sy(v){return tp+(H-tp-b)*(hi-v)/(hi-lo);}
+  function sx(day){return l+(W-l-r)*(daySpan?(Date.parse(day)-firstDay)/daySpan:0.5);}function sy(v){return tp+(H-tp-b)*(hi-v)/(hi-lo);}
   var s='<svg class="g-chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Daily '+ml()+' in '+durationUnitName(false)+(t!==null?', with the target line':'')+'"><title>Daily '+ml()+'</title>';
   bands.forEach(function(band){
     s+='<rect class="gc-specification-band" x="'+sx(band.from)+'" y="'+sy(band.upper)+'" width="'+(sx(band.until)-sx(band.from))
       +'" height="'+(sy(band.lower)-sy(band.upper))+'" fill="var(--accent-soft)"/>';
   });
-  for(var v=lo;v<=hi+1e-9;v+=st)s+='<line class="gc-grid" x1="'+l+'" x2="'+(W-r)+'" y1="'+sy(v).toFixed(1)+'" y2="'+sy(v).toFixed(1)+'"/><text class="gc-tick" x="'+(l-8)+'" y="'+(sy(v)+4).toFixed(1)+'" text-anchor="end">'+durationNumber(v,true)+'</text>';
+  s+=runValueGrid(lo,hi,sy,l,W-r)+'<path class="g-run-axis" d="M'+l+' '+tp+'V'+(H-b)+'H'+(W-r)+'"/>';
   s+='<text class="gc-unit" transform="translate(14 '+((H-b+tp)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>';
   var multipleYears=start.slice(0,4)!==end.slice(0,4);
   var maxLabels=Math.max(2,Math.floor((W-l-r)/(multipleYears?120:96))),step=Math.ceil(days.length/maxLabels);
-  days.forEach(function(d,i){if(i%step===0)s+='<text class="gc-tick" x="'+sx(d.key).toFixed(1)+'" y="'+(H-b+20)+'" text-anchor="middle">'+esc(multipleYears?d.key:d.key.slice(5))+'</text>';});
+  if(period){
+    const spanDays=daySpan/86400000, intervals=Math.min(spanDays,maxLabels-1);
+    for(let index=0;index<=intervals;index++){
+      const day=new Date(firstDay+(intervals?Math.round(index*spanDays/intervals)*86400000:0)).toISOString().slice(0,10);
+      s+=runDateTick(sx(day).toFixed(1),H-b,multipleYears?day:day.slice(5));
+    }
+  }else days.forEach(function(d,i){if(i%step===0)s+=runDateTick(sx(d.key).toFixed(1),H-b,multipleYears?d.key:d.key.slice(5));});
   var badges=[],laneEnds=[l,l];
   eventDays.forEach(function(event){
     var x=sx(event.date),badge=eventBadge(event,x,l,W-r,laneEnds);
@@ -1706,10 +1735,17 @@ function gLine(R,events=[]){
       +'<line class="gc-event"'+(eventDays.size>20?' style="opacity:.22"':'')+' x1="'+x+'" x2="'+x+'" y1="'+(badge?badge.bottom:tp)+'" y2="'+(H-b)+'"/><circle class="gc-event-dot" cx="'+x+'" cy="'+tp+'" r="4"/></g>';
   });
   if(t!==null)s+='<line class="gc-target" x1="'+l+'" x2="'+(W-r)+'" y1="'+sy(t).toFixed(1)+'" y2="'+sy(t).toFixed(1)+'"/><text class="gc-tlabel" x="'+(W-r+6)+'" y="'+(sy(t)+4).toFixed(1)+'">Target '+durationNumber(t,true)+' '+durationUnitSymbol()+'</text>';
-  s+='<path class="gc-line" d="M'+days.map(function(d){return sx(d.key).toFixed(1)+" "+sy(d.value).toFixed(1);}).join(" L")+'"/>';
-  if(days.length<=40)days.forEach(function(d){s+='<circle class="gc-actual" cx="'+sx(d.key).toFixed(1)+'" cy="'+sy(d.value).toFixed(1)+'" r="6"><title>'+esc(d.key)+' · '+durationNumber(d.value,false)+' '+durationUnitSymbol()+'</title></circle>';});
+  var trace=days.map(function(day,index){
+    var connects=index>0&&nextDay(days[index-1].key)===day.key;
+    return (connects?'L':'M')+sx(day.key).toFixed(1)+' '+sy(day.value).toFixed(1);
+  }).join(' ');
+  var dense=(W-l-r)/(daySpan/86400000)<6;
+  s+='<path class="gc-line g-run-trace" style="--run-trace-width:'+(dense?2:3)+'px" d="'+trace+'"/>';
+  var readings=days.length<=40?days:days.filter((day,index)=>
+    (!index||nextDay(days[index-1].key)!==day.key)&&days[index+1]?.key!==nextDay(day.key));
+  readings.forEach(function(d){s+='<circle class="gc-actual g-run-actual" cx="'+sx(d.key).toFixed(1)+'" cy="'+sy(d.value).toFixed(1)+'" r="6"><title>'+esc(d.key)+' · '+durationNumber(d.value,false)+' '+durationUnitSymbol()+'</title></circle>';});
   s+=badges.join("")+'</svg>';
-  var legend=[["observed","Observed daily "+ml(),days.length<=40
+  var legend=[["observed","Observed daily "+ml(),readings.length
     ?tracePointKey('<i class="dt-dot g-observed-point-key"></i>','g-observed-trace-key'):null]];
   if(t!==null)legend.push(["target","Target"]);
   if(bands.length)legend.push(["box","Applicable specification range"]);
@@ -1738,18 +1774,18 @@ function observedDimensions(R){
 }
 function trendFilterFields(R,state){
   var sc=R.scope,groups=R.group_charts||{};
-  if(R.metric?.metric_id==="aht"){
+  if(hasRecordedEvents(R)){
     const choices=(key,label,values,format=String)=>'<fieldset class="g-daily-choices"><legend>'+esc(label)+'</legend>'
       +'<div class="g-daily-choice-list" data-daily-choice="'+key+'">'+values.map(value=>
         '<label title="'+esc(format(value))+'"><input type="checkbox" value="'+esc(value)+'"'+(state[key].includes(value)?' checked':'')
         +'><span>'+esc(format(value))+'</span></label>').join('')+'</div></fieldset>';
     const types=dailyEventTypes(dailyEventSourceCurrent(R)?R.calendar_events||[]:[]);
-    return chartDateField('g-trend-start','From',state.start,sc.start,sc.end)
-      +chartDateField('g-trend-end','Until',state.end,sc.start,sc.end)
-      +choices('dailyLines','Lines of Business',sc.lines_of_business)
+    return '<div class="g-daily-dates">'+chartDateField('g-trend-start','From',state.start,sc.start,sc.end)
+      +chartDateField('g-trend-end','Until',state.end,sc.start,sc.end)+'</div>'
+      +'<div class="g-daily-checklists">'+choices('dailyLines','Lines of Business',sc.lines_of_business)
       +choices('dailyDrivers','Contact drivers',sc.contact_types)
-      +(types.length?choices('eventTypes','Event types',types,dailyEventLabel)
-        +'<label class="g-daily-marker-toggle"><input type="checkbox" id="g-trend-events"'+(state.events?' checked':'')+'> Show event markers on chart</label>':'');
+      +(types.length?choices('eventTypes','Event types',types,dailyEventLabel):'')+'</div>'
+      +(types.length?'<label class="g-daily-marker-toggle"><input type="checkbox" id="g-trend-events"'+(state.events?' checked':'')+'> Show event markers on chart</label>':'');
   }
   var combinations=R.combined_daily;
   function groupSelect(id,dimension,all,selected){
@@ -1765,11 +1801,11 @@ function trendFilterFields(R,state){
   }
   var filters=groupSelect("g-trend-line","line_of_business","All lines of business",state.line)
     +groupSelect("g-trend-driver","contact_type","All contact drivers",state.driver)+dateInput("start","From")+dateInput("end","Until");
-  if(R.calendar_events?.length&&(R.metric?.metric_id!=="aht"||dailyEventSourceCurrent(R))){
-    filters+='<label for="g-trend-events"><input type="checkbox" id="g-trend-events"'+(state.events?' checked':'')+'> '+(R.metric?.metric_id==="aht"?'Show event markers on chart':'Show calendar events')+'</label>';
+  if(R.calendar_events?.length&&(!hasRecordedEvents(R)||dailyEventSourceCurrent(R))){
+    filters+='<label for="g-trend-events"><input type="checkbox" id="g-trend-events"'+(state.events?' checked':'')+'> '+(hasRecordedEvents(R)?'Show event markers on chart':'Show calendar events')+'</label>';
     var types=[...new Set(R.calendar_events.map(event=>event.type))].sort();
     filters+=observedSelect("g-trend-event-type","Event type",[["","All event types"]]
-      .concat(types.map(type=>[type,type.replace(/_/g," ")])),state.eventType,R.metric?.metric_id!=="aht"&&!state.events);
+      .concat(types.map(type=>[type,type.replace(/_/g," ")])),state.eventType,!hasRecordedEvents(R)&&!state.events);
   }
   return filters;
 }
@@ -1837,8 +1873,25 @@ function dailyTrendTakeaway(days,details,weekly=''){
     '<h4>Facts</h4><p>'+n0(eligible.length)+' business dates had eligible results.</p>'+(weekly?'<p>'+esc(weekly)+'</p>':'')
     +details);
 }
+function baselineDailyChart(R){
+  const state=observedState(R), table=state.baselineDailyView==='table';
+  const observed=R.by_day.filter(day=>Number.isFinite(day.value)).length;
+  const takeaway=observed?DAILY_TREND_UNASSESSED:'No eligible daily '+ml()+' readings are available for this period.';
+  const facts='<h4>Facts</h4><ul><li>'+n0(observed)+' business dates had eligible readings.</li>'
+    +chartPeriodFact(R.scope)+'</ul>';
+  const visual=reportChartControls('baselineDaily',state)
+    +'<h4 class="g-insights-chart-title" id="g-baseline-daily-title">Daily '+esc(chartMetricAxis())+'</h4>'
+    +(table?dailyTrendTable(R):gLine(R,[],R.scope));
+  return '<section id="g-baseline-daily-panel" class="g-chart-container-box" aria-labelledby="g-baseline-daily-title">'
+    +gSlideResult(gSlideTakeaway(takeaway,facts),visual)+'</section>';
+}
+function baselineDailyEvidence(R){
+  return '<h3>Daily performance evidence</h3>'+chartAppliedScope(REPORT_CHART_CONTROLS.baselineDaily,R)
+    +'<p>'+esc(dailyCalculation(R))+'</p>'
+    +dailyTrendTable(R)+'<h4>Daily trend assessment</h4><p>'+DAILY_TREND_UNASSESSED+'</p>';
+}
 function gObservedTrend(R){
-  if(R.metric?.metric_id==="aht")return gDailyTrend(R);
+  if(hasRecordedEvents(R))return gRecordedEvents(R);
   var state=observedState(R),{view,events,note,missing,combinations}=trendSelection(R,state);
   var tableMode=state.trendView==="table";
   var graph=tableMode?dailyTrendTable(view):gLine(view,state.events?events:[]);
@@ -1859,21 +1912,22 @@ function gObservedTrend(R){
     +gSlideResult(dailyTrendTakeaway(view.by_day,note+evidence,trendWeekComparison(view,state)),visual)+'</section>';
 }
 function trendEvidence(R){
-  if(R.metric?.metric_id==="aht")return dailyAhtEvidence(R);
+  if(hasRecordedEvents(R))return recordedEventsEvidence(R);
   var state=observedState(R),{view,events,note}=trendSelection(R,state);
   var weekly=trendWeekComparison(view,state);
   return '<h3>Daily performance evidence</h3>'+chartScopeTitle(R,'Daily results',state)
     +'<p>The takeaway compares the first and last eligible dates. The line shows the changes between them.</p>'
     +(weekly?'<p>'+esc(weekly)+'</p>':'')+dailyTrendTable(view)+note+(state.events&&R.calendar_events?gCalendarEvents(events,state.eventType,false):'');
 }
-const DAILY_EVENT_UNAVAILABLE='The relationship between recorded events and average handle time could not be assessed within the analysis period.';
+const hasRecordedEvents=R=>Boolean(R?.daily_event_comparison);
+const DAILY_EVENT_UNAVAILABLE=()=> 'The relationship between recorded events and '+ml()+' could not be assessed within the analysis period.';
 const DAILY_TREND_UNASSESSED='A consistent trend could not be assessed for this selection.';
 const dailyShortDate=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric'});
 const dailyFullDate=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric',year:'numeric'});
 const dailyEventLabel=type=>type.replace(/_/g,' ').replace(/^./,letter=>letter.toUpperCase());
 const dailyEventDetail=events=>events.map(event=>dailyEventLabel(event.type)+(event.details?' · '+event.details:'')).join(' / ');
 const dailyEventTypes=events=>[...new Set(events.map(event=>event.type))].sort();
-const dailyAht=value=>durationNumber(value,false)+' '+durationUnitSymbol();
+const dailyValue=value=>durationNumber(value,false)+' '+durationUnitSymbol();
 const DAILY_EVENT_COLORS=new Map([['operations','teal'],['systems','violet'],['training','ochre'],['type 2','rose']]);
 const lockedDailyEventColor=type=>DAILY_EVENT_COLORS.get(type.toLowerCase().replace(/[_-]+/g,' '));
 function dailyEventColor(type){
@@ -1895,7 +1949,7 @@ function dailyWorkFilters(R,state){
   return {lines:lines.length===R.scope.lines_of_business.length?null:lines,
     drivers:drivers.length===R.scope.contact_types.length?null:drivers};
 }
-function dailyAhtScope(R,state){
+function dailyEventScope(R,state){
   const {start,end}=state,{lines,drivers}=dailyWorkFilters(R,state);
   const pairs=lines||drivers?(R.combined_daily||[]).filter(pair=>
     (!lines||lines.includes(pair.line_of_business))&&(!drivers||drivers.includes(pair.contact_type))
@@ -1907,9 +1961,9 @@ function dailyEventSourceCurrent(R){
   const source=R.daily_event_comparison?.source;
   return !observedState(R).eventSourceInvalid&&(!source||source.upload_id===optionalUploadIds().D08);
 }
-function dailyAhtSelection(R,state){
+function dailyEventSelection(R,state){
   const recorded=trendEvents(R,state);
-  const scope=dailyAhtScope(R,state),lines=new Set(scope.lines_of_business);
+  const scope=dailyEventScope(R,state),lines=new Set(scope.lines_of_business);
   const events=dailyEventSourceCurrent(R)?recorded.filter(event=>event.lines_of_business.some(line=>lines.has(line))):[];
   const references=R.daily_references;
   const work=dailyWorkFilters(R,state);
@@ -1945,7 +1999,7 @@ function dailyAhtSelection(R,state){
     markers:state.events?displayEvents:[],referenceReason:selected?.reason,
     expectsTarget:selected?.intervals.some(ref=>Number.isFinite(ref.target))};
 }
-function dailyAhtCoverage({days,expectsTarget,referenceReason}){
+function dailyEventCoverage({days,expectsTarget,referenceReason}){
   if(referenceReason)return '<p class="muted">'+esc(referenceReason)+'</p>';
   if(!expectsTarget)return '';
   const gaps=[];
@@ -1960,10 +2014,17 @@ function dailyAhtCoverage({days,expectsTarget,referenceReason}){
     +'. Add coverage for those dates or use Monitor only.</p>':'';
 }
 function dailySpecification(ref){
-  if(Number.isFinite(ref?.lower)&&Number.isFinite(ref.upper))return durationNumber(ref.lower,false)+'–'+dailyAht(ref.upper);
-  if(Number.isFinite(ref?.lower))return 'Lower limit '+dailyAht(ref.lower);
-  if(Number.isFinite(ref?.upper))return 'Upper limit '+dailyAht(ref.upper);
+  if(Number.isFinite(ref?.lower)&&Number.isFinite(ref.upper))return durationNumber(ref.lower,false)+'–'+dailyValue(ref.upper);
+  if(Number.isFinite(ref?.lower))return 'Lower limit '+dailyValue(ref.lower);
+  if(Number.isFinite(ref?.upper))return 'Upper limit '+dailyValue(ref.upper);
   return '—';
+}
+function dailyCalculation(R){
+  if(R.metric?.unit==='seconds')return 'Daily average handle time divides eligible handling seconds by eligible handled contacts for each business date.';
+  if(R.metric?.percent_basis==='pass_flags')return 'Each daily rate divides passes by contacts with eligible pass outcomes.';
+  if(R.metric?.percent_basis==='weighted_period_rates')return 'Each daily rate pools supplied rates using their eligible handled-contact weights.';
+  if(R.metric?.percent_basis==='supplied_fraction')return 'Each daily reading pools the supplied scores over eligible observations and expresses the result as a percentage.';
+  return 'Each daily reading pools the supplied score points over '+gCountLabel(R).toLowerCase()+'.';
 }
 function dailyEventsTable(result,evidence=false){
   const events=evidence?result.events:result.displayEvents;
@@ -1971,7 +2032,7 @@ function dailyEventsTable(result,evidence=false){
   const readings=new Map(result.days.map(day=>[day.date,day.value]));
   const dated=new Set();
   return '<section '+(evidence?'':'id="g-calendar-events" ')+'aria-label="Recorded account events"><div class="scroll g-event-table g-daily-event-table" role="region" aria-label="Recorded account events" tabindex="0">'
-    +'<table><thead><tr>'+['Event ID','Business date','Event type','Event title','Scope','Daily AHT'].map(label=>'<th scope="col">'+label+'</th>').join('')
+    +'<table><thead><tr>'+['Event ID','Business date','Event type','Event title','Scope','Daily '+ML()].map(label=>'<th scope="col">'+label+'</th>').join('')
     +'</tr></thead><tbody>'+events.map(event=>{
       const first=!dated.has(event.date);
       dated.add(event.date);
@@ -1979,16 +2040,16 @@ function dailyEventsTable(result,evidence=false){
       ?' id="g-trend-event-'+esc(event.date)+'" tabindex="-1"':'')+'>'
       +'<th scope="row"><span class="g-event-id">'+esc(event.id)+'</span></th>'
       +[event.date,dailyEventLabel(event.type),event.details||'—',(event.recorded_lines_of_business||event.lines_of_business).join(', '),
-        Number.isFinite(readings.get(event.date))?dailyAht(readings.get(event.date)):'No eligible reading']
+        Number.isFinite(readings.get(event.date))?dailyValue(readings.get(event.date)):'No eligible reading']
         .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>';
     }).join('')+'</tbody></table></div></section>';
 }
-function dailyAhtEvidence(R){
-  const state=observedState(R), result=dailyAhtSelection(R,state);
+function recordedEventsEvidence(R){
+  const state=observedState(R), result=dailyEventSelection(R,state);
   const hasTarget=result.refs.some(ref=>Number.isFinite(ref.target));
   const hasBounds=result.refs.some(ref=>Number.isFinite(ref.lower)||Number.isFinite(ref.upper));
   const unit=durationUnitSymbol();
-  const columns=['Business date','Actual ('+unit+')','Eligible contacts',...(hasTarget?['Target ('+unit+')','Gap ('+unit+')']:[]),
+  const columns=['Business date','Actual ('+unit+')',gCountLabel(R),...(hasTarget?['Target ('+unit+')','Gap ('+dailyGapUnit()+')']:[]),
     ...(hasBounds?['Specification ('+unit+')']:[])];
   const rows=result.days.map(day=>{
     const target=day.ref?.target, gap=Number.isFinite(target)&&Number.isFinite(day.value)?day.value-target:null;
@@ -1998,17 +2059,25 @@ function dailyAhtEvidence(R){
     return '<tr id="g-trend-day-'+day.date+'" tabindex="-1"><th scope="row">'+day.date+'</th>'
       +values.map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>';
   }).join('');
-  return '<h3>Daily trend · Evidence</h3>'+chartAppliedScope(REPORT_CHART_CONTROLS.trend,R)
-    +'<p>Daily AHT is eligible handling seconds divided by eligible handled contacts for each business date.</p>'
-    +(dailyWorkFilters(R,state).drivers?'<p>Contact drivers filter AHT. Each event retains its recorded Lines of Business.</p>':'')
-    +dailyAhtCoverage(result)+'<h4>Daily readings</h4><div class="scroll g-daily-readings" role="region" aria-label="Daily readings" tabindex="0"><table><thead><tr>'
+  return '<h3>Recorded events · Evidence</h3>'+chartAppliedScope(REPORT_CHART_CONTROLS.trend,R)
+    +'<p>'+esc(dailyCalculation(R))+'</p>'
+    +(dailyWorkFilters(R,state).drivers?'<p>Contact drivers filter daily readings. Each event retains its recorded Lines of Business.</p>':'')
+    +dailyEventCoverage(result)+'<h4>Daily readings</h4><div class="scroll g-daily-readings" role="region" aria-label="Daily readings" tabindex="0"><table><thead><tr>'
     +columns.map(label=>'<th scope="col">'+esc(label)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'
     +'<h4>Recorded account events</h4>'+dailyEventsTable(result,true)
-    +dailyComparisonEvidence(dailyComparison(R))
-    +'<h4>Daily trend assessment</h4><p>'+DAILY_TREND_UNASSESSED+'</p>';
+    +dailyComparisonEvidence(dailyComparison(R));
 }
 const dailyComparison=R=>dailyEventSourceCurrent(R)?observedState(R).eventComparison||R.daily_event_comparison:null;
-const dailySeconds=value=>(value<0?'−':value>0?'+':'')+Math.abs(value).toFixed(1);
+function dailyGapUnit(long=false){
+  return metricKind()==='percent'?(long?'percentage points':'pp'):long?durationUnitName():durationUnitSymbol();
+}
+function dailyGap(value,long=false){
+  return (value<0?'−':value>0?'+':'')+durationNumber(Math.abs(value),false)+' '+dailyGapUnit(long);
+}
+function dailyImpact(value,long=false){
+  if(metricKind()!=='seconds')return dailyGap(value);
+  return (value<0?'−':value>0?'+':'')+Math.abs(value).toFixed(1)+(long?' handle hours':' hr');
+}
 const dailyDateLabel=date=>dailyFullDate.format(new Date(date+'T00:00:00Z'));
 const dailyTypeAnchor=index=>'g-trend-event-type-'+index;
 const dailyComparisonReason=comparison=>({
@@ -2017,32 +2086,26 @@ const dailyComparisonReason=comparison=>({
 })[comparison?.reason]||'Event-log coverage is unknown for this selection.';
 function dailyComparisonNarrative(comparison){
   const types=(comparison?.types||[]).filter(type=>type.mean!==null);
-  const qualifying=types.filter(type=>type.tier), takeaway=[], next=[];
+  const takeaway=[];
   const name=type=>dailyEventLabel(type.type);
-  const scored=type=>({label:name(type),text:' · '+dailySeconds(type.mean)+' sec'});
-  if(qualifying.length>1){
-    for(const band of [...comparison.bands].reverse()){
-      const group=qualifying.filter(type=>type.tier===band.band);
-      if(group.length){
-        const subject=group.length===1?'This event type ':'These event types ';
-        const wording=group.length===1?band.wording.replace(/^were /,'was ').replace(/^appear /,'appears '):band.wording;
-        takeaway.push({text:subject+wording+' with a difference in average handle time.',items:group.map(scored)});
-      }
+  const scored=type=>({label:name(type),text:' · '+dailyGap(type.mean)});
+  const selected=types.filter(type=>comparison.takeaway?.types.includes(type.type));
+  if(selected.length){
+    const band=comparison.bands.find(item=>item.band===comparison.takeaway.band);
+    if(selected.length>1){
+      takeaway.push({text:'These event types '+band.wording+' with a difference in '+ml()+'.',items:selected.map(scored)});
+    }else{
+      const [type]=selected, gap=dailyGap(type.mean,true);
+      takeaway.push(band.band==='95%'?name(type)+' events may be associated with a difference in '+ml()+' within the analysis period. The observed difference averaged '+gap+'.'
+        :name(type)+' events '+band.wording+' with an average difference of '+gap+' in '+ml()+' within the analysis period.');
     }
-    next.push({text:'Review these events for possible preventive or corrective actions to limit potential impact on performance.',
-      items:qualifying.map(type=>({label:name(type)}))});
-  }else if(qualifying.length===1){
-    const [type]=qualifying, gap=dailySeconds(type.mean)+' seconds';
-    const wording=comparison.bands.find(band=>band.band===type.tier).wording;
-    takeaway.push(type.tier==='98%'?name(type)+' events may be associated with a difference in average handle time within the analysis period. The observed difference averaged '+gap+'.'
-      :name(type)+' events '+wording+' with an average difference of '+gap+' in average handle time within the analysis period.');
-    next.push('Review the '+name(type)+' events for possible preventive or corrective actions to limit potential impact on performance.');
-  }
-  if(!qualifying.length){
-    takeaway.push(types.length?'No evaluated event type met the reporting threshold for average handle time within the analysis period.':DAILY_EVENT_UNAVAILABLE);
-    if(types.length)next.push('Review the day-to-day process for inconsistencies and potential improvements.');
-  }
-  const facts=types.length?[{text:'Average handle time gaps from the same-weekday baseline',items:types.map(scored)}]:[];
+  }else takeaway.push(types.length?'No evaluated event type met the reporting threshold for '+ml()+' within the analysis period.':DAILY_EVENT_UNAVAILABLE());
+
+  const facts=types.length?[{text:ML()+' gaps from the same-weekday baseline',items:types.map(scored)}]:[];
+  const next=selected.map(type=>{
+    const label=name(type);
+    return types.some(other=>other.type!==type.type&&name(other)===label)?label+' ('+type.type+')':label;
+  });
   return {takeaway,facts,next};
 }
 function dailyComparisonTable(label,columns,rows){
@@ -2057,8 +2120,12 @@ function dailyComparisonEvidence(comparison){
   const span=source?.first_date?'<p>Eligible D08 records for this account span '+dailyDateLabel(source.first_date)+' to '+dailyDateLabel(source.last_date)+'.</p>':'';
   const exclusions=source?.diagnostics?.withheld_rows?'<p>Records withheld for invalid Line of Business flags · '+n0(source.diagnostics.withheld_rows)+'</p>':'';
   if(!comparison?.types.length)return heading+span+exclusions+'<p>'+dailyComparisonReason(comparison)+'</p></section>';
-  const rule='<p>Reporting wording uses a 10-second operational anchor and a fixed 95% reference half-width of 3 seconds. The highest cutoff reached applies, including equality, using unrounded values. 95% confidence intervals are unavailable.</p>'
-    +dailyComparisonTable('Event Takeaway wording',['Reference band','Entry cutoff (rounded)','Wording'],comparison.bands.map(band=>[band.band,band.cutoff.toFixed(5)+' sec',band.wording]));
+  const rule='<p>The Takeaway and chart highlights use the vital few by absolute magnitude, then the first qualifying band in order: 80%, 90%, 95%. The reference-band cutoffs use unrounded gaps and include equality. Event confidence intervals are unavailable.</p>'
+    +dailyComparisonTable('Event Takeaway wording',['Reference band','Entry cutoff (rounded)','Wording'],comparison.bands.map(band=>
+      [band.band,(band.cutoff/durationFactor()).toFixed(5)+' '+dailyGapUnit(),band.wording]));
+  const selection=comparison.takeaway?.band
+    ?'<p>Takeaway reference band: '+esc(comparison.takeaway.band)+' · '+esc(comparison.takeaway.types.map(dailyEventLabel).join(', '))+'</p>'
+    :'<p>No event type was selected for the Takeaway.</p>';
   const weekdays=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   const attribution={individual_title:'Individual title',shared_date:'Shared date',title_unavailable:'Title unavailable'};
   const names=events=>[...new Set(events.map(event=>event.details||dailyEventLabel(event.type)))].join(' · ')||'—';
@@ -2066,25 +2133,34 @@ function dailyComparisonEvidence(comparison){
   const types=comparison.types.map((type,index)=>{
     const {higher,lower,unchanged}=type.direction_counts;
     const heading='<section class="dt-comparison-evidence"><h5 id="'+dailyTypeAnchor(index)+'" tabindex="-1">'+esc(dailyEventLabel(type.type))+'</h5>';
-    const gaps=type.gaps.map(gap=>[dailyDateLabel(gap.key),recordedNames[gap.key],gap.value.toFixed(1)+' sec',gap.benchmark.toFixed(1)+' sec',
-      dailySeconds(gap.difference)+' sec',n0(gap.count),dailySeconds(gap.hours)+' hr · '+attribution[gap.attribution]]);
+    const gaps=type.gaps.map(gap=>[dailyDateLabel(gap.key),recordedNames[gap.key],dailyValue(gap.value),dailyValue(gap.benchmark),
+      dailyGap(gap.difference),n0(gap.count),dailyImpact(gap.impact)+' · '+attribution[gap.attribution]]);
     const exposed=new Set([...type.gaps.map(gap=>gap.key),...type.omitted.map(gap=>gap.date)]);
     const references=Object.keys(type.benchmarks).flatMap(weekday=>comparison.weekdays[weekday].filter(ref=>!exposed.has(ref.key)).map(ref=>
-      [dailyDateLabel(ref.key),weekdays[weekday],ref.value.toFixed(1)+' sec',n0(ref.count),recordedNames[ref.key]||'—']));
-    const titles=type.titles.map(title=>[title.title,n0(title.dates),n0(title.contacts),dailySeconds(title.hours)+' hr']);
-    const omitted=type.omitted.map(day=>[dailyDateLabel(day.date),day.reason==='no_eligible_aht'?'No eligible daily AHT.':'No comparison date on this weekday.']);
-    const leader=type.leader?'<p>Largest same-direction title gap: '+esc(type.leader.title)+' · '+dailySeconds(type.leader.hours)+' handle hours across '+n0(type.leader.contacts)+' contacts.</p>':'';
-    return heading+(gaps.length?'<p>Mean difference '+dailySeconds(type.mean)+' sec · Wording reference: '+(type.tier||'Below the wording cutoff')
+      [dailyDateLabel(ref.key),weekdays[weekday],dailyValue(ref.value),n0(ref.count),recordedNames[ref.key]||'—']));
+    const titles=type.titles.map(title=>[title.title,n0(title.dates),n0(title.count),dailyImpact(title.impact)]);
+    const omitted=type.omitted.map(day=>[dailyDateLabel(day.date),day.reason==='no_eligible_reading'?'No eligible daily reading.':'No comparison date on this weekday.']);
+    const leader=type.leader?'<p>Largest same-direction title gap: '+esc(type.leader.title)+' · '+dailyImpact(type.leader.impact,true)+' across '+n0(type.leader.count)+' '+gCountLabel().toLowerCase()+'.</p>':'';
+    return heading+(gaps.length?'<p>Mean difference '+dailyGap(type.mean)+' · Wording reference: '+(type.tier||'Below the wording cutoff')
       +' · '+higher+' higher · '+lower+' lower · '+unchanged+' unchanged</p>'
-      +dailyComparisonTable('Compared event dates',['Event date','Recorded titles','Daily AHT','Weekday benchmark','AHT gap','Contacts','Handle-time gap'],gaps)
-      +dailyComparisonTable('Weekday comparison dates',['Comparison date','Weekday','Daily AHT','Contacts','Other recorded events'],references):'<p>No comparable dates.</p>')
-      +leader+(titles.length?dailyComparisonTable('Named event totals',['Event title','Dates','Contacts','Net handle-time gap'],titles):'')
+      +dailyComparisonTable('Compared event dates',['Event date','Recorded titles','Daily '+ML(),'Weekday benchmark','Gap',gCountLabel(),'Volume-weighted contribution'],gaps)
+      +dailyComparisonTable('Weekday comparison dates',['Comparison date','Weekday','Daily '+ML(),gCountLabel(),'Other recorded events'],references):'<p>No comparable dates.</p>')
+      +leader+(titles.length?dailyComparisonTable('Named event totals',['Event title','Dates',gCountLabel(),'Net volume-weighted contribution'],titles):'')
       +(omitted.length?dailyComparisonTable('Excluded event dates',['Excluded event date','Reason'],omitted):'')+'</section>';
   }).join('');
-  return heading+'<p>Daily AHT is compared with the average for the same weekday on eligible dates without a recorded event of that type. Daily AHT and contact volumes use the applied scope shown above.</p>'
-    +span+exclusions+'<div class="dt-comparison-evidence">'+rule+'</div>'+types+'</section>';
+  return heading+'<p>Daily '+ml()+' is compared with the average for the same weekday on eligible dates without a recorded event of that type. Readings and eligible counts use the applied scope.</p>'
+    +(metricKind()!=='seconds'?'<p>Each title’s contribution sums its signed gaps weighted by the day’s share of eligible observations across all comparable event dates of that type.</p>':'')
+    +span+exclusions+'<div class="dt-comparison-evidence">'+rule+selection+'</div>'+types+'</section>';
 }
-function dailyComparisonGraphic(comparison,eventTypes){
+function dailyGapDirections(R){
+  const direction=R.metric?.direction;
+  const lower=direction==='lower_is_better',higher=direction==='higher_is_better';
+  return [
+    {side:'lower',sign:-1,tone:lower?'favorable':higher?'unfavorable':'neutral',label:lower?'Favorable':higher?'Unfavorable':'Lower'},
+    {side:'higher',sign:1,tone:higher?'favorable':lower?'unfavorable':'neutral',label:higher?'Favorable':lower?'Unfavorable':'Higher'}
+  ];
+}
+function dailyComparisonGraphic(R,comparison,eventTypes){
   const types=(comparison?.types||[]).filter(type=>!eventTypes||eventTypes.includes(type.type)).map(type=>({type}));
   const values=types.flatMap(({type})=>type.gaps.length?[type.mean,...type.gaps.map(gap=>gap.difference)]:[]);
   if(!values.length)return '<p class="dt-empty muted">'+(types.length?'No event dates have an eligible same-weekday comparison in this selection.'
@@ -2097,32 +2173,35 @@ function dailyComparisonGraphic(comparison,eventTypes){
   const position=value=>100*(value-low)/(high-low), zero=position(0);
   const ticks=[...new Set([low,low/2,0,high/2,high])].filter(value=>value===0||Math.abs(position(value)-zero)>=9);
   const axis='<div class="dt-comparison-axis" aria-hidden="true">'+ticks.map(value=>
-    `<span class="dt-axis-tick" data-edge="${value===low?'start':value===high?'end':''}" style="--tick-x:${position(value)}%"><span>${value>0?'+':''}${Number(value.toPrecision(3))}</span></span>`).join('')+'</div>';
+    `<span class="dt-axis-tick" data-edge="${value===low?'start':value===high?'end':''}" style="--tick-x:${position(value)}%"><span>${value>0?'+':''}${Number((value/durationFactor()).toPrecision(3))}</span></span>`).join('')+'</div>';
   const key=(text,mark)=>'<li class="dt-key">'+text+mark+'</li>';
-  const qualification='Meets reporting threshold';
-  const legend='<ul class="dt-legend dt-comparison-legend">'+key('Favorable mean gap',arrowKey('favorable',-1))
-    +key('Unfavorable mean gap',arrowKey('unfavorable',1))+key('Compared date','<i class="dt-dot" aria-hidden="true"></i>')
-    +['favorable','unfavorable'].map(direction=>`<li class="dt-key" data-short-key="${direction}" hidden>${direction==='favorable'?'Favorable':'Unfavorable'} short mean gap<i class="dt-short-key" data-performance="${direction}" aria-hidden="true"></i></li>`).join('')
+  const qualification='Selected for Takeaway';
+  const selected=new Set(comparison.takeaway?.types);
+  const directions=dailyGapDirections(R);
+  const legend='<ul class="dt-legend dt-comparison-legend">'
+    +directions.map(({label,tone,sign})=>key(label+' mean gap',arrowKey(tone,sign))).join('')
+    +key('Compared date','<i class="dt-dot" aria-hidden="true"></i>')
+    +directions.map(({side,label,tone})=>`<li class="dt-key" data-short-key="${side}" hidden>${label} short mean gap<i class="dt-short-key" data-performance="${tone}" aria-hidden="true"></i></li>`).join('')
     +(types.some(({type})=>type.mean===0)?key('No mean gap','<i class="dt-gap-zero" aria-hidden="true"></i>'):'')
-    +(types.some(({type})=>type.tier)?key(qualification,'<i class="dt-qualified-key" aria-hidden="true"></i>'):'')+'</ul>';
+    +(types.some(({type})=>selected.has(type.type))?key(qualification,'<i class="dt-qualified-key" aria-hidden="true"></i>'):'')+'</ul>';
   const rows=types.map(({type})=>{
     const title=dailyEventLabel(type.type)+' events';
     const label='<div class="dt-comparison-heading" role="heading" aria-level="5"'
-      +(type.gaps.length?' tabindex="0"':'')+' aria-label="'+esc(title+(type.tier?' · '+qualification:''))+'">'+esc(title)+'</div>';
+      +(type.gaps.length?' tabindex="0"':'')+' aria-label="'+esc(title+(selected.has(type.type)?' · '+qualification:''))+'">'+esc(title)+'</div>';
     if(!type.gaps.length)return '<div class="dt-comparison-row">'+label+'<p class="dt-comparison-empty">No comparable dates</p></div>';
     const points=new Map();
     for(const gap of type.gaps){
       if(!points.has(gap.difference))points.set(gap.difference,[]);
-      points.get(gap.difference).push(dailyDateLabel(gap.key)+' · AHT '+gap.value.toFixed(1)+' sec · Gap vs. weekday benchmark '+dailySeconds(gap.difference)+' sec');
+      points.get(gap.difference).push(dailyDateLabel(gap.key)+' · '+ML()+' '+dailyValue(gap.value)+' · Gap vs. weekday benchmark '+dailyGap(gap.difference));
     }
     const dots=[...points].map(([gap,labels])=>`<span class="dt-gap-point" role="img" tabindex="0" style="--gap-x:${position(gap)}%" ${readingDetailAttributes(labels.join('\n'))}><i class="dt-dot" aria-hidden="true"></i></span>`).join('');
-    const end=position(type.mean), leftward=type.mean<0;
+    const end=position(type.mean), {side,sign,tone}=directions[type.mean<0?0:1];
     const arrow=type.mean===0?'<span class="dt-gap-zero" aria-hidden="true"></span>'
-      :`<span class="dt-gap-segment" data-performance="${leftward?'favorable':'unfavorable'}" style="--arrow-start:${Math.min(zero,end)}%;--arrow-length:${Math.abs(end-zero)}%;--arrow-direction:${leftward?-1:1}" aria-hidden="true"><i class="dt-gap-arrow"></i><i class="dt-gap-endpoint"></i></span>`;
-    return `<div class="dt-comparison-row" style="--gap-mean:${end}%">${label}<div class="dt-gap-track"${type.tier?' data-qualifies':''} style="--gap-zero:${zero}%"><span class="dt-gap-mean-line" aria-hidden="true"></span>${arrow}${dots}</div><div class="dt-gap-callout"><span class="dt-gap-label">Mean gap ${dailySeconds(type.mean)} sec</span></div>${axis}</div>`;
+      :`<span class="dt-gap-segment" data-performance="${tone}" data-gap-side="${side}" style="--arrow-start:${Math.min(zero,end)}%;--arrow-length:${Math.abs(end-zero)}%;--arrow-direction:${sign}" aria-hidden="true"><i class="dt-gap-arrow"></i><i class="dt-gap-endpoint"></i></span>`;
+    return `<div class="dt-comparison-row" style="--gap-mean:${end}%">${label}<div class="dt-gap-track"${selected.has(type.type)?' data-qualifies':''} style="--gap-zero:${zero}%"><span class="dt-gap-mean-line" aria-hidden="true"></span>${arrow}${dots}</div><div class="dt-gap-callout"><span class="dt-gap-label">Mean gap ${esc(dailyGap(type.mean))}</span></div>${axis}</div>`;
   }).join('');
   return '<div class="dt-frame dt-comparison-frame">'+legend+rows
-    +'<div class="dt-comparison-unit"><span>Lower AHT</span><span>Average handle time difference (seconds)</span><span>Higher AHT</span></div></div>';
+    +'<div class="dt-comparison-unit"><span>Lower '+esc(ml())+'</span><span>'+esc(ML()+' difference ('+dailyGapUnit(true)+')')+'</span><span>Higher '+esc(ml())+'</span></div></div>';
 }
 const dailyEventDot=type=>`<i class="dt-dot dt-event-key" style="--event-color:${dailyEventColor(type)}" aria-hidden="true"></i>`;
 const arrowKey=(performance,direction)=>`<i class="dt-gap-arrow" data-performance="${performance}" style="--arrow-direction:${direction}" aria-hidden="true"></i>`;
@@ -2193,9 +2272,9 @@ function runReferenceLayers(spans,{id,trace,left,right,top,bottom,low,high,y,wid
    const first=y(from)+(from===end?head:0),last=y(to)-(to===start?head:0);
    return `<path class="dt-spec-tail" d="M18 ${first}V${last}" stroke="${color}" stroke-width="12"/>`;
   }).join('');
-  const target=Number.isFinite(ref.target)?`<rect class="dt-target-midpoint" x="0" y="${y(ref.target)-7}" width="36" height="14" rx="4"/><text class="dt-target-scale-label" x="18" y="${y(ref.target)+3}" text-anchor="middle">${esc(dailyAht(ref.target))}</text>`:'';
+  const target=Number.isFinite(ref.target)?`<rect class="dt-target-midpoint" x="0" y="${y(ref.target)-7}" width="36" height="14" rx="4"/><text class="dt-target-scale-label" x="18" y="${y(ref.target)+3}" text-anchor="middle">${esc(dailyValue(ref.target))}</text>`:'';
   defs.push(`<linearGradient id="${gradient}" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="${top}" y2="${bottom}">${stops}</linearGradient><clipPath id="${clip}"><rect x="${x1}" y="${top-2}" width="${x2-x1}" height="${bottom-top+4}"/></clipPath>`);
-  const label=[Number.isFinite(ref.target)?'Target '+dailyAht(ref.target):'',dailySpecification(ref)==='—'?'':'Specification '+dailySpecification(ref)].filter(Boolean).join(' · ');
+  const label=[Number.isFinite(ref.target)?'Target '+dailyValue(ref.target):'',dailySpecification(ref)==='—'?'':'Specification '+dailySpecification(ref)].filter(Boolean).join(' · ');
   scales.push(`<g class="dt-target-scale"${Number.isFinite(ref.target)?` data-target="${ref.target}"`:''} role="img" aria-label="${esc(label)}"${i===spans.length-1?'':' hidden'}>${extensions}${arrow}${target}</g>`);
   washes.push(`<g class="dt-context-wash" aria-hidden="true" hidden><rect x="${left}" y="${top}" width="${Math.max(0,x1-left)}" height="${bottom-top}"/><rect x="${x2}" y="${top}" width="${Math.max(0,right-x2)}" height="${bottom-top}"/></g>`);
   const levels=new Map();
@@ -2247,18 +2326,25 @@ function bindRunReference(svg,owner,spans,{left,right,top,bottom,width}){
 function runReadingRequirements(value,reference,missing='No target applies'){
  const target=reference?.target,lower=reference?.lower,upper=reference?.upper;
  const gap=Number.isFinite(target)?value-target:null;
- const targetStatus=gap===null?missing:'Target '+dailyAht(target)+' · '+(gap===0?'On target':
+ const targetStatus=gap===null?missing:'Target '+dailyValue(target)+' · '+(gap===0?'On target':
   ((reference.rule==='at_or_above'?gap>0:gap<0)?'Meets target':'Misses target')+' · Gap '+insSignedGap(gap));
  if(lower==null&&upper==null)return targetStatus;
  const outside=(lower!=null&&value<lower)||(upper!=null&&value>upper);
  return targetStatus+' · '+(outside?'Outside specification limits':'Within specification limits');
 }
-function drawDailyAht(plot,r){
+function runChartMarkSizes(slot,normalTrace=3){
+  const dot=Math.max(3,Math.min(slot/2,10));
+  return {dot,event:Math.max(9,Math.min(1.6*dot,16)),trace:slot<6?2:normalTrace};
+}
+function drawRecordedEvents(plot,r){
  const W=plot.clientWidth;
  if(W<160||plot.dataset.width===String(W))return;
  plot.dataset.width=W;
  const figures=r.observed.map(d=>d.value).concat(r.refs.flatMap(ref=>[ref.lower,ref.upper,ref.target].filter(Number.isFinite)));
- const low=figures.length?Math.max(0,Math.min(...figures)-8):550, high=figures.length?Math.max(...figures)+8:670;
+ const min=Math.min(...figures),max=Math.max(...figures);
+ const pad=metricKind()==='seconds'?8:Math.max((max-min)*.08,.01);
+ const low=figures.length?(metricKind()==='seconds'?Math.max(0,min-pad):min-pad):0;
+ const high=figures.length?max+pad:1;
  const scale=10**Math.floor(Math.log10((high-low)/6));
   const tick=[1,2,2.5,5,10].map(n=>n*scale).find(n=>Math.ceil((high-Math.floor(low/n)*n)/n)<=6)||20*scale;
  const lo=Math.floor(low/tick)*tick, hi=lo+6*tick;
@@ -2303,9 +2389,9 @@ function drawDailyAht(plot,r){
   return `${cmd}${x(i).toFixed(1)} ${y(d.value).toFixed(1)}`;
  }).join(' ');
  const pointGradients=[];
- const clamp=(min,value,max)=>Math.min(max,Math.max(min,value));
  const plotScope=plot.closest('.g-trend-focus')?'focus':'slide';
- const scaleId='dt-'+plotScope,traceId=scaleId+'-trace',traceWidth=step<6?2:3;
+ const sizes=runChartMarkSizes(step);
+ const scaleId='dt-'+plotScope,traceId=scaleId+'-trace',traceWidth=sizes.trace;
  const mid=(top+bottom)/2;
  const layers=runReferenceLayers(spans,{id:scaleId,left,right,top,bottom,low:lo,high:hi,y,width:traceWidth,
   trace:(value,color)=>runLevelTrace(r.days,value,color,x,y)});
@@ -2314,8 +2400,7 @@ function drawDailyAht(plot,r){
   const reference=' · '+runReadingRequirements(d.value,d.ref);
   const records=eventsByDate[d.date]||[], types=dailyEventTypes(records);
   const readingX=x(i), readingY=y(d.value);
-  const hollow=clamp(3,.5*step,10);
-  const radius=(types.length?clamp(9,1.6*hollow,16):hollow)/2;
+  const radius=(types.length?sizes.event:sizes.dot)/2;
   let fill=types.length===1?dailyEventColor(types[0]):'';
   if(types.length>1){
    const id='dt-event-color-'+plotScope+'-'+d.date;
@@ -2325,7 +2410,7 @@ function drawDailyAht(plot,r){
   }
   const style=fill?' style="fill:'+fill+'"':'';
   const details=records.length?' · '+dailyEventDetail(records):'';
-  return mark('dt-point','reading',d.date,dailyFullDate.format(new Date(d.date))+' · Actual '+dailyAht(d.value)+reference+details,
+  return mark('dt-point','reading',d.date,dailyFullDate.format(new Date(d.date))+' · Actual '+dailyValue(d.value)+reference+details,
    `<circle class="dt-reading dt-reading-${types.length?'event':'ordinary'}" cx="${readingX}" cy="${readingY}" r="${radius}"${style}${types.length?'':periodAttr(d.ref)}/><circle cx="${readingX}" cy="${readingY}" r="${Math.max(4,Math.min(10,step/2))}" fill="transparent"/>`,'',periodIndex.get(d.ref)??-1);
  }).join('');
  const labelMarks=positioned.map(({group,event,reading,ref,x:anchor,center,width,side,lane})=>{
@@ -2335,7 +2420,7 @@ function drawDailyAht(plot,r){
   if(ref)return line('dt-target-leader',center,anchor,startY,y(ref.target),ref)+box+text('Target '+durationNumber(ref.target,durationUnit()==='seconds'),center,yy+11,'middle','dt-target-label');
   const value=reading?.value;
   const types=dailyEventTypes(group);
-  const label=`${event.id} · ${dailyFullDate.format(new Date(event.date))} · ${dailyEventDetail(group)} · ${value==null?'No eligible reading':'Daily AHT '+dailyAht(value)}`;
+  const label=`${event.id} · ${dailyFullDate.format(new Date(event.date))} · ${dailyEventDetail(group)} · ${value==null?'No eligible reading':'Daily '+ml()+' '+dailyValue(value)}`;
   const band=22/types.length;
   const stripes=types.map((type,i)=>`<rect x="${center-11+i*band}" y="${yy+13}" width="${band}" height="2" rx="1" style="fill:${dailyEventColor(type)}"/>`).join('');
   return mark('dt-marker gc-event-marker','event',event.date,label,
@@ -2347,10 +2432,10 @@ function drawDailyAht(plot,r){
   const last=i===r.days.length-1;
   return last||(i%every===0&&(r.days.length-1-i)*step>50)?line('dt-date-axis',x(i),x(i),axisY,axisY+4)+text(dailyShortDate.format(new Date(d.date)),x(i),axisY+20,last&&step<40?'end':'middle'):'';
  }).join('');
- plot.innerHTML=`<svg viewBox="0 0 ${W} ${axisY+31}" height="${axisY+31}" role="group" aria-label="Daily average handle time in ${esc(durationUnitName(true))}">
+ plot.innerHTML=`<svg viewBox="0 0 ${W} ${axisY+31}" height="${axisY+31}" role="group" aria-label="Daily ${esc(chartMetricAxis())}">
   <defs><path id="${traceId}" d="${trace}"/>${pointGradients.join('')}${layers.defs}</defs>
   ${spans.length?`<rect class="dt-plot-hit" x="${left}" y="${top}" width="${right-left}" height="${bottom-top}" fill="transparent"/>`:''}
-  <text class="dt-metric-axis-title" transform="translate(${12+gutter} ${mid}) rotate(-90)" text-anchor="middle">${esc("Average handle time ("+durationUnitName()+")")}</text>
+  <text class="dt-metric-axis-title" transform="translate(${12+gutter} ${mid}) rotate(-90)" text-anchor="middle">${esc(chartMetricAxis())}</text>
   ${layers.scales}${fills}${layers.washes}${grid}${boundaries}${targetLines}${line('dt-date-axis dt-date-rule',left,right,axisY,axisY)}${labels}
   <use href="#${traceId}" class="dt-actual dt-context-trace" style="--trace-width:${traceWidth}px"/>${layers.overlays}${labelMarks}${marks}</svg>`;
  if(spans.length)bindRunReference(plot.firstElementChild,plot,spans,{left,right,top,bottom,width:W});
@@ -2363,59 +2448,59 @@ function runLevelTrace(readings,value,color,x,y){
  return path?`<path class="dt-actual dt-reference-level-trace" style="--trace-color:${color}" d="${path}"/>`:'';
 }
 
-function gDailyTrend(R){
-  const state=observedState(R), result=dailyAhtSelection(R,state);
+function gRecordedEvents(R){
+  const state=observedState(R), result=dailyEventSelection(R,state);
   const comparison=dailyComparison(R), narrative=dailyComparisonNarrative(comparison);
   const view=reportViews('trend',state).current[0];
-  const title=view==='table'?'Recorded account events':view==='comparison'?'AHT difference by event type'
-    :'Daily average handle time · '+durationUnitName();
+  const title=view==='table'?'Recorded account events':view==='comparison'?ML()+' difference by event type ('+dailyGapUnit()+')'
+    :'Daily '+ml()+' · '+durationUnitName();
   const show=result.observed.length||result.markers.length||result.refs.length;
-  const body=view==='comparison'?dailyComparisonGraphic(comparison,state.eventTypes)
+  const body=view==='comparison'?dailyComparisonGraphic(R,comparison,state.eventTypes)
     :view==='table'?dailyEventsTable(result)
     :'<div class="dt-frame">'+(show?dailyChartLegend(result)+'<div class="dt-plot"></div>'
       :'<p class="dt-empty">No eligible readings in this selection.</p>')+'</div>';
   const visual=reportChartControls('trend',state)+'<h4 class="g-insights-chart-title" id="g-observed-trend">'+esc(title)+'</h4>'+body;
   const list=items=>'<ul>'+items.map(item=>takeawayListItem(item)).join('')+'</ul>';
   const details='<h4>Facts</h4>'+list([...narrative.facts,'Analysis period from '+dailyDateLabel(state.start)+' to '+dailyDateLabel(state.end)+'.'])
-    +(narrative.next.length?'<h4>Next steps</h4>'+list(narrative.next):'')
+    +gNextSteps(narrative.next,'Compare the recorded dates with their same-weekday benchmarks in Evidence before deciding on preventive or corrective actions.')
     +'<button type="button" id="g-trend-evidence-link" class="g-linkbtn" data-chapter="g-trend-comparison-evidence">Evidence</button>';
   return '<section id="g-observed-trend-panel" class="g-chart-container-box g-daily-aht" aria-labelledby="g-observed-trend">'
-    +gSlideResult(gSlideTakeaway([...narrative.takeaway,DAILY_TREND_UNASSESSED],details),visual,true)+'</section>';
+    +gSlideResult(gSlideTakeaway(narrative.takeaway,details),visual)+'</section>';
 }
 function dailyGuidePages(R){
-  const state=observedState(R), result=dailyAhtSelection(R,state);
+  const state=observedState(R), result=dailyEventSelection(R,state);
   const types=dailyEventTypes(result.markers);
   const examples=types.length?'<div class="dt-guide-types"><table><thead><tr><th scope="col">Event type</th><th scope="col">Icon</th></tr></thead><tbody>'
     +types.map(type=>'<tr><th scope="row">'+esc(dailyEventLabel(type))+'</th><td>'+dailyEventDot(type)+'</td></tr>').join('')+'</tbody></table></div>'
     :'<p>'+(result.displayEvents.length?'Event markers are hidden for this chart.':'No recorded events match this selection.')+'</p>';
   const direction=(tone,sign,title,meaning)=>'<div class="dt-guide-direction" data-performance="'+tone+'"><strong>'+title+'</strong>'
     +'<div class="dt-guide-arrow-sample">'+arrowKey(tone,sign)+'</div><span>'+meaning+'</span></div>';
-  const directions='<div class="dt-guide-directions">'+direction('favorable',-1,'Favorable','Lower AHT')
-    +direction('unfavorable',1,'Unfavorable','Higher AHT')+'</div>';
+  const directions='<div class="dt-guide-directions">'+dailyGapDirections(R).map(({tone,sign,label,side})=>
+    direction(tone,sign,label,(side==='lower'?'Lower ':'Higher ')+ml())).join('')+'</div>';
   const limits=result.refs.some(ref=>Number.isFinite(ref.lower)&&Number.isFinite(ref.upper));
   return ['<h4>Events on the daily chart</h4>'
-      +'<p>A boxed code <span class="dt-guide-event-code">E1</span> marks an event date. Hover or focus the code for the event name and any eligible AHT reading.</p>'
+      +'<p>A boxed code <span class="dt-guide-event-code">E1</span> marks an event date. Hover or focus the code for the event name and any eligible reading.</p>'
       +'<p>Filled dots use the event type’s color. A split dot shows that more than one event type shares the date.</p>'+examples
       +'<p>Gaps indicate dates without an eligible reading.</p>'
       +(result.refs.some(ref=>Number.isFinite(ref.target))?'<p class="dt-guide-reference">The amber Target line <i class="dt-target" aria-hidden="true"></i> marks the applicable target. Hover over a target period to see how its readings compare with the target.</p>':'')
       +(limits?'<p class="dt-guide-reference">The green band '+dailySpecificationKey(result.refs)+' spans the business specification limits.</p>'
         :result.refs.some(ref=>Number.isFinite(ref.lower)||Number.isFinite(ref.upper))?'<p class="dt-guide-reference">The dashed line '+dailySpecificationKey(result.refs)+' marks the applicable business specification limit.</p>':''),
     '<h4>Event comparison</h4>'+directions
-      +'<p>Each arrow shows how much average AHT differed on dates with the event type compared with the same weekdays without it. Longer arrows show larger gaps. A very short gap appears as a dot at the mean.</p>'
-      +'<p>Hover over or focus an event point to see the date and its actual AHT.</p>'];
+      +'<p>Each arrow shows how much '+ml()+' differed on dates with the event type compared with the same weekdays without it. Longer arrows show larger gaps. A very short gap appears as a dot at the mean.</p>'
+      +'<p>Hover over or focus an event point to see the date and its actual reading.</p>'];
 }
 function trendPreview(R,draft){
   var valid=draft.start&&draft.end&&draft.start>=R.scope.start&&draft.end<=R.scope.end&&draft.start<=draft.end;
-  if(!valid)return {valid:false,text:R.metric?.metric_id==="aht"?'Choose an ordered date range within the analysis window.'
+  if(!valid)return {valid:false,text:hasRecordedEvents(R)?'Choose an ordered date range within the analysis window.'
     :'Choose an ordered date range within the report period.'};
-  if(R.metric?.metric_id==="aht"){
+  if(hasRecordedEvents(R)){
     if(!draft.dailyLines.length||!draft.dailyDrivers.length)
       return {valid:false,text:'Select at least one Line of Business and contact driver.'};
-    if(dailyAhtScope(R,draft).pairs?.length===0)
+    if(dailyEventScope(R,draft).pairs?.length===0)
       return {valid:false,text:'Choose Lines of Business and contact drivers that occur together.'};
-    var result=dailyAhtSelection(R,draft);
+    var result=dailyEventSelection(R,draft);
     return {valid:true,text:result.observed.length+' of '+result.days.length+' dates have eligible readings · '
-      +result.displayEvents.length+' recorded events',html:dailyAhtCoverage(result)};
+      +result.displayEvents.length+' recorded events',html:dailyEventCoverage(result)};
   }
   var {view,events}=trendSelection(R,draft),days=view.by_day.filter(day=>Number.isFinite(day.value));
   var count=view.by_day.reduce((total,day)=>total+day.count,0);
@@ -2426,11 +2511,12 @@ function trendPreview(R,draft){
 function trendDraft(R){
   const state=observedState(R);
   const {start,end,events,line,driver,eventType}=state;
-  if(R.metric?.metric_id!=="aht")return {start,end,events,line,driver,eventType};
+  if(!hasRecordedEvents(R))return {start,end,events,line,driver,eventType};
   return {start,end,events,dailyLines:state.dailyLines??R.scope.lines_of_business,
     dailyDrivers:state.dailyDrivers??R.scope.contact_types,eventTypes:state.eventTypes??dailyEventTypes(R.calendar_events||[])};
 }
 var REPORT_CHART_CONTROLS={
+  baselineDaily:{id:"g-baseline-daily-panel",title:"Daily trend",view:"baselineDailyView",render:baselineDailyChart,evidence:baselineDailyEvidence},
   stability:{id:"g-stability-panel",title:"Stability",view:"stabilityView",render:stabilityPanel,evidence:stabilityEvidence,
     views:R=>[["chart","Individuals"],...(R&&stabilitySelection(R).rangeSignals.length?[["moving-range","Moving Range"]]:[]),
       ["scale","Stability scale"],["out-of-control","Out-of-control points"]],
@@ -2438,23 +2524,23 @@ var REPORT_CHART_CONTROLS={
     inputs:{"g-stability-start":"stabilityStart","g-stability-end":"stabilityEnd"},refresh:[],
     afterApply:(state,R)=>{if(state.stabilityView==='moving-range'&&!stabilitySelection(R).rangeSignals.length)state.stabilityView='chart';}},
   trend:{id:"g-observed-trend-panel",title:"Daily trend",view:"trendView",render:gObservedTrend,evidence:trendEvidence,
-    views:R=>R?.metric?.metric_id==="aht"?[["chart","Chart"],
-      ...(dailyAhtSelection(R,observedState(R)).displayEvents.length?[["table","Event table"]]:[]),
+    views:R=>hasRecordedEvents(R)?[["chart","Chart"],
+      ...(dailyEventSelection(R,observedState(R)).displayEvents.length?[["table","Event table"]]:[]),
       ["comparison","Event comparison"]]:[["chart","Chart"],["table","Table"]],
     scope:R=>{var {start,end,line,driver}=observedState(R);return {start,end,
-      ...(R.metric?.metric_id==="aht"?dailyAhtScope(R,observedState(R))
+      ...(hasRecordedEvents(R)?dailyEventScope(R,observedState(R))
         :{lines_of_business:line?[line]:R.scope.lines_of_business,contact_types:driver?[driver]:R.scope.contact_types})};},
     fields:trendFilterFields,draft:trendDraft,preview:trendPreview,inputs:{"g-trend-line":"line","g-trend-driver":"driver","g-trend-start":"start","g-trend-end":"end","g-trend-events":"events","g-trend-event-type":"eventType"},
     request:(R,draft)=>{
       const run=dailyComparison(R)?.run,current=trendDraft(R);
-      if(R.metric?.metric_id!=="aht"||!run||["start","end","dailyLines","dailyDrivers"].every(field=>
+      if(!hasRecordedEvents(R)||!run||["start","end","dailyLines","dailyDrivers"].every(field=>
         JSON.stringify(current[field])===JSON.stringify(draft[field])))return null;
       const {start,end,dailyLines,dailyDrivers}=draft;
       return {daily_run:run,daily_window:{start,end,lines_of_business:dailyLines,contact_types:dailyDrivers}};
     },
     commit:(R,comparison,draft)=>Object.assign(observedState(R),draft,{eventComparison:comparison}),
     refresh:["line","driver","eventType"],afterApply:(state,R)=>{
-      if(R.metric?.metric_id==="aht"&&state.trendView==="table"&&!dailyAhtSelection(R,state).displayEvents.length)state.trendView="chart";
+      if(hasRecordedEvents(R)&&state.trendView==="table"&&!dailyEventSelection(R,state).displayEvents.length)state.trendView="chart";
       hourlyTrendChanged(R);
     }},
   box:{id:"g-observed-comparison",title:"Group performance comparison",view:"boxView",render:gBreakdowns,evidence:R=>gReportGroups(R,true),
@@ -2513,16 +2599,19 @@ function reportViewButton(key,state){
 }
 function reportChartControls(key,state,showView=true){
   var chart=REPORT_CHART_CONTROLS[key],[,active]=reportViews(key,state).current;
-  var label='Focus mode: '+chart.title+', '+active;
+  var label='Focus mode: '+reportChartTitle(chart)+', '+active;
   var icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';
   return '<button type="button" class="btn secondary g-compact-chart-control" id="g-'+key+'-explore" data-chart-explore="'+key+'" aria-haspopup="dialog" aria-expanded="false" aria-controls="g-chart-filter">Explore your data</button>'
     +(showView?reportViewButton(key,state):'')
     +'<button type="button" class="btn secondary g-focus-mode g-compact-chart-control" id="g-'+key+'-expand" data-chart-expand="'+key+'" aria-label="'+esc(label)+'"><span>Focus mode</span>'+icon+'</button>';
 }
+function reportChartTitle(chart){
+  return chart===REPORT_CHART_CONTROLS.trend&&hasRecordedEvents(xR())?'Recorded events':chart.title;
+}
 function chartDialogFields(modal){return modal.chart.fields(modal.result,modal.draft).replaceAll(' data-observed-chart','');}
 function chartDialogHtml(modal){
   return {className:'g-settings-modal g-trend-focus',html:
-    '<div class="g-modal-body-wrap"><div class="g-modal-header-bar"><h3 id="g-modal-h" tabindex="-1">'+esc(modal.card.querySelector('#g-component-movement-title')?.textContent||modal.chart.title)+'</h3>'
+    '<div class="g-modal-body-wrap"><div class="g-modal-header-bar"><h3 id="g-modal-h" tabindex="-1">'+esc(modal.card.querySelector('#g-component-movement-title')?.textContent||reportChartTitle(modal.chart))+'</h3>'
     +'<button type="button" id="g-modal-close" class="btn secondary g-compact-chart-control" aria-label="Close Focus mode">Close</button></div><div class="g-modal-scroll-pane"></div></div>'};
 }
 var chartFilter=null;
@@ -2535,8 +2624,11 @@ function positionChartPopover(panel,trigger,beside=false){
     return;
   }
   panel.style.maxWidth=(window.innerWidth-2*margin)/zoom+'px';
-  panel.style.maxHeight=(window.innerHeight-2*margin)/zoom+'px';
+  var filter=panel.classList.contains('g-filter-popover');
+  if(!filter)panel.style.maxHeight=(window.innerHeight-2*margin)/zoom+'px';
   var bounds=panel.getBoundingClientRect();
+  var scrollBody=filter&&(panel.querySelector('.g-filter-scroll')||panel);
+  var naturalHeight=bounds.height+(scrollBody?(scrollBody.scrollHeight-scrollBody.clientHeight)*zoom:0);
   if(beside){
     var right=anchor.right+margin,left=anchor.left-bounds.width-margin;
     var nextTo=right+bounds.width<=window.innerWidth-margin?right:left>=margin?left:null;
@@ -2548,7 +2640,7 @@ function positionChartPopover(panel,trigger,beside=false){
   }
   var anchorBottom=beside?anchor.bottom:Math.max(anchor.bottom,trigger.closest(".g-slide-heading")?.getBoundingClientRect().bottom||0);
   var below=window.innerHeight-anchorBottom-margin*2,above=anchor.top-margin*2;
-  var flip=bounds.height>below&&above>below;
+  var flip=naturalHeight>below&&above>below;
   var space=Math.max(0,flip?above:below);
   panel.style.maxHeight=space/zoom+'px';
   panel.style.top=(flip?Math.max(margin,anchor.top-panel.getBoundingClientRect().height-margin):anchorBottom+margin)/zoom+'px';
@@ -2585,10 +2677,10 @@ function openChartFilter(trigger,key,chart,result){
   var guide=document.querySelector(".g-guide.is-open");
   if(guide)gSetGuide(guide,false);
   var state=observedState(result),draft=chart.draft?chart.draft(result):Object.fromEntries(Object.values(chart.inputs||{}).map(field=>[field,state[field]]));
-  var daily=key==="trend"&&result.metric?.metric_id==="aht";
+  var daily=key==="trend"&&hasRecordedEvents(result);
   var panel=document.createElement("section");
   panel.id="g-chart-filter";
-  panel.className="g-chart-popover g-filter-popover";
+  panel.className="g-chart-popover g-filter-popover"+(daily?' g-filter-popover--multi':'');
   panel.setAttribute("popover","manual");
   panel.setAttribute("role","dialog");
   panel.setAttribute("aria-label","Explore your data");
@@ -2596,20 +2688,23 @@ function openChartFilter(trigger,key,chart,result){
   var scope=chartAppliedScope(chart,result);
   if(chart.fields){
     var preview=chart.preview(result,draft);
-    var heading=daily
-      ?'<div class="g-daily-explore-heading"><h4>Explore your data</h4><button type="button" class="btn secondary" data-close-daily-explore>Close</button></div>':'';
-    panel.innerHTML=heading+scope+'<form id="g-trend-filter-form"><div class="g-trend-fields'+(daily?' g-daily-fields':'')+'">'+chartDialogFields(chartFilter)+'</div>'
+    var compact=daily?' g-compact-chart-control':'';
+    var actions='<div class="g-chart-filter-actions"><button type="button" class="btn secondary'+compact+'" id="g-trend-cancel">Cancel</button>'
+      +'<button type="submit" class="btn'+compact+'" id="g-trend-apply"'+(preview.valid?'':' disabled')+'>Apply</button></div>';
+    var heading=daily?'<div class="g-daily-explore-heading"><h4 tabindex="-1">Explore your data</h4>'+actions+'</div>':'';
+    panel.innerHTML=(daily?'':scope)+'<form id="g-trend-filter-form">'+heading
+    +(daily?'<div class="g-filter-scroll" role="region" aria-label="Filter options" tabindex="0">'+scope:'')
+    +'<div class="g-trend-fields'+(daily?' g-daily-fields':'')+'">'+chartDialogFields(chartFilter)+'</div>'
     +'<aside class="g-trend-preview"><h4>Selection preview</h4><p id="g-trend-preview" role="status">'+esc(preview.text)+'</p>'
-    +'<div id="g-trend-preview-detail">'+(preview.html||'')+'</div></aside>'
-    +'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Cancel</button>'
-      +'<button type="submit" class="btn" id="g-trend-apply"'+(preview.valid?'':' disabled')+'>Apply</button></div></form>';
+    +'<div id="g-trend-preview-detail">'+(preview.html||'')+'</div></aside>'+(daily?'</div>':'')
+    +(daily?'':actions)+'</form>';
   }else panel.innerHTML=scope+'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Close</button></div>';
   trigger.after(panel);
   trigger.setAttribute("aria-expanded","true");
   panel.showPopover();
   chart.sync?.(chartFilter);
   positionChartPopover(panel,trigger);
-  (panel.querySelector("input:not(:disabled),select:not(:disabled)")||panel.querySelector("button")).focus({preventScroll:true});
+  (panel.querySelector(".g-daily-explore-heading h4")||panel.querySelector("input:not(:disabled),select:not(:disabled)")||panel.querySelector("button")).focus({preventScroll:true});
 }
 function openChartDialog(trigger){
   var key=trigger.dataset.chartExpand||trigger.dataset.chartExplore,chart=REPORT_CHART_CONTROLS[key];
@@ -2633,7 +2728,7 @@ function openChartDialog(trigger){
       toolbarPlaceholder.querySelectorAll('[id]').forEach(control=>control.removeAttribute('id'));
       toolbar.before(toolbarPlaceholder);
     }
-    gMarkInsightsNav('g-slide-daily');
+    gMarkInsightsNav('g-slide-recorded-events');
   }
   card.replaceWith(placeholder);
   S.modal={chartMode:"focus",chart,result:R,card,toolbar,toolbarPlaceholder,placeholder,from:trigger.id,top:window.scrollY};
@@ -2732,7 +2827,9 @@ document.addEventListener("submit",async function(e){
   updateChartEvidence(modal.key,R);
 });
 function updateChartEvidence(key,R){
-  var chart=REPORT_CHART_CONTROLS[key],evidence=document.getElementById(chart.evidenceId||"g-"+key+"-evidence");
+  var chart=REPORT_CHART_CONTROLS[key];
+  var id=key==="trend"&&hasRecordedEvents(R)?"g-recorded-events-evidence":chart.evidenceId||"g-"+key+"-evidence";
+  var evidence=document.getElementById(id);
   if(evidence&&chart.evidence){
     if(chart.evidenceId)evidence.outerHTML=chart.evidence(R);
     else evidence.innerHTML=chart.evidence(R);
@@ -2786,7 +2883,7 @@ function hourlyDraft(R){
 }
 function hourlyTrendScope(R){
   const state=observedState(R);
-  if(R.metric?.metric_id!=="aht")return state;
+  if(!hasRecordedEvents(R))return state;
   const {lines,drivers}=dailyWorkFilters(R,state);
   if(lines?.length>1||drivers?.length>1)return null;
   return {start:state.start,end:state.end,line:lines?.[0]||'',driver:drivers?.[0]||''};
@@ -2817,7 +2914,7 @@ function hourlyResultsTable(map){
 }
 function hourlyScopeNotice(map,R){
   var state=hourlyTrendScope(R);
-  if(!state)return 'This heatmap uses its own applied scope because Daily Trend has multiple groups selected.';
+  if(!state)return 'This heatmap uses its own applied scope because Recorded events has multiple groups selected.';
   var applied=map.selection;
   return applied.line!==state.line||applied.driver!==state.driver||applied.start<state.start||map.days.at(-1)>state.end
     ?'Apply heatmap filters to use the current trend selection.':'';
@@ -2865,7 +2962,7 @@ function hourlyTrendChanged(R){
 }
 function gArt(id,num,title,desc,body,src){var at=gVisibleChapters().map(function(c){return c[0];}).indexOf(id);if(at>=0)num=at+1;return '<article class="g-chapter-article" id="'+id+'" aria-labelledby="'+id+'-h"'+src+'><header class="g-chapter-heading"><h2 id="'+id+'-h" tabindex="-1">Chapter '+num+': '+esc(title)+'</h2>'+(desc?'<p class="g-ch-desc">'+esc(desc)+'</p>':'')+'</header>'+body+'</article>';}
 function gQuestionSlide(id,question,body){
-  var daily=id==="g-slide-daily"&&xR()?.metric?.metric_id==="aht";
+  var daily=id==="g-slide-recorded-events";
   return body?'<section class="g-question-slide g-slide-frame'+(daily?' g-daily-aht-slide':'')+'" id="'+id+'" aria-labelledby="'+id+'-question">'
     +'<header class="g-slide-heading"><h3 class="g-slide-question" id="'+id+'-question">'+esc(question)+'</h3>'
     +'<p class="g-slide-subtitle" hidden></p><div class="g-slide-toolbar" role="group" aria-label="Slide controls"></div>'+gGuideControl(id,question)+'</header>'
@@ -2903,6 +3000,11 @@ function takeawayListItem(item,attribute=''){
   return '<li'+attribute+'>'+esc(item.text)+'<ul class="g-takeaway-subitems">'+item.items.map(({label,text})=>
     '<li><strong>'+esc(label)+'</strong>'+esc(text||'')+'</li>').join('')+'</ul></li>';
 }
+function gNextSteps(categories,action){
+  if(!categories.length)return '';
+  const items=[...new Set(categories)].map(label=>({label}));
+  return '<h4>Next steps</h4><ul class="g-takeaway-next-steps">'+takeawayListItem({text:action,items})+'</ul>';
+}
 function gSlideTakeaway(message,details='',id=''){
   var answers=Array.isArray(message)?message:[message];
   var template=document.createElement('template');
@@ -2937,14 +3039,14 @@ function gSlideTakeaway(message,details='',id=''){
 function gTakeawayMeaning(message){
   return '<p class="g-takeaway-meaning"><span aria-hidden="true">↪</span> '+esc(message)+'</p>';
 }
-function gSlideResult(takeaway,visual,visualFirst=false){
-  var graphic='<div class="g-slide-visual">'+visual+'</div>';
-  return '<div class="g-slide-result">'+(visualFirst?graphic+takeaway:takeaway+graphic)+'</div>';
+function gSlideResult(takeaway,visual){
+  return '<div class="g-slide-result"><div class="g-slide-visual">'+visual+'</div>'+takeaway+'</div>';
 }
 var INSIGHT_GUIDES={
   "g-slide-requirements":["Target attainment"],
   "g-slide-stability":["Run charts"],
   "g-slide-score-cutoff":["Observation score cutoff"],
+  "g-slide-recorded-events":["Event comparison"],
   "g-slide-daily":["Daily movement", [["Below 0","Fell"],["0","Unchanged"],["Above 0","Rose"]],"Change compares the last and first eligible days in the applied selection."],
   "g-slide-hourly":["Highest eligible hour",[["Below 10","Below takeaway minimum"],["10 or more","Eligible for the takeaway"]],"The highest finite KPI and exact ties are highlighted among qualifying hours. Lower-count cells remain visible."],
   "g-slide-volume":["Busiest dates",[["Ranks 1–5","Most handled contacts"]],"Count ranks describe workload in the selected scope. Equal counts are ordered by date."],
@@ -2971,6 +3073,7 @@ function gGuideControl(id,question){
   if(!Object.hasOwn(INSIGHT_GUIDES,id))return '';
   var R=xR();
   if(id==="g-slide-requirements"&&!R?.account_requirements&&!R?.target_assessment?.periods?.some(p=>typeof p.target_met==="boolean"))return '';
+  if(id==="g-slide-daily"&&hasRecordedEvents(R))return '';
   if(id==="g-slide-hourly"&&!R?.hourly_heatmap)return '';
   if(id==="g-slide-scenario"&&(!R?.insights?.scenario||R.insights.scenario.blocked||!R.insights.constraints))return '';
   if(id==="g-slide-actions"&&!R?.insights?.cards?.length)return '';
@@ -3078,7 +3181,7 @@ function gGuideContent(slide,R){
 }
 function gSetGuide(guide,open,focus=false){
   var toggle=guide.firstElementChild,panel=guide.lastElementChild,slide=guide.closest(".g-question-slide");
-  var daily=slide.id==="g-slide-daily"&&xR()?.metric?.metric_id==="aht";
+  var daily=slide.id==="g-slide-recorded-events";
   guide.classList.toggle("is-open",open);
   toggle.setAttribute("aria-expanded",String(open));
   toggle.setAttribute("aria-label",(open?"Close":"Open")+" threshold guide for "+slide.querySelector(".g-slide-question").textContent);
@@ -3099,7 +3202,7 @@ function gRenderGuide(guide,slide){
   var body=panel.classList.contains('dt-guide');
   var R=xR(),pages=slide.id==="g-slide-requirements"&&R?.account_requirements
     ?requirementsGuidePages(R):slide.id==="g-slide-stability"?stabilityGuidePages(R)
-      :slide.id==="g-slide-daily"&&R?.metric?.metric_id==="aht"?dailyGuidePages(R):[gGuideContent(slide,R)];
+      :slide.id==="g-slide-recorded-events"?dailyGuidePages(R):[gGuideContent(slide,R)];
   index=Math.min(index,pages.length-1);
   guide.dataset.page=String(index);
   panel.innerHTML='<div class="g-guide-heading"><h4 tabindex="-1">Threshold Guide</h4></div>'
@@ -3156,14 +3259,13 @@ function gReportGroups(R,evidence=false){
 function gContactPerformance(R,evidence=false){
   var groups=R.by_groups?.contact_type||[];
   var volume=new Map((R.handled_contacts_by_type||[]).map(row=>[row.key,row.count]));
-  var isAht=(R.metric?.metric_id||metricId())==="aht";
-  var impact=isAht?R.insights?.contact_driver_impact:null;
+  var impact=R.insights?.contact_driver_impact;
   var impactByType=new Map((impact?.rows||[]).filter(row=>Number.isFinite(row.impact)).map(row=>[row.key,row]));
-  var pooled=isAht?(impact?.baseline??R.value):null;
+  var pooled=impact?.baseline??R.value;
   function impactText(result){
     var value=result?.impact;
     if(!Number.isFinite(value))return '—';
-    return (value<0?'−':value>0?'+':'')+Math.abs(value)+' sec';
+    return insSignedGap(value);
   }
   var rows=groups.map(row=>({...row,eligible:row.count,count:volume.get(row.key)??(metricId()==="aht"?row.count:null)}))
     .filter(row=>Number.isFinite(row.count)&&row.count>0&&Number.isFinite(row.value));
@@ -3172,12 +3274,12 @@ function gContactPerformance(R,evidence=false){
   var target=xHasTarget(R),bounds=R.target_assessment?.overall?.classified?R.target_assessment.overall.specification:null;
   var hasScopedReferences=rows.some(row=>requirements.has(row.key));
   if(hasScopedReferences){target=null;bounds=null;}
-  var references=[[pooled,'impact-pooled','Scoped pooled AHT','g-contact-pooled'],[target,'target','Target','gc-target'],
+  var references=[[pooled,'impact-pooled','Scoped pooled '+ml(),'g-contact-pooled'],[target,'target','Target','gc-target'],
     [bounds?.lower,'impact-limit','Lower limit','g-contact-limit'],[bounds?.upper,'impact-limit','Upper limit','g-contact-limit']]
     .filter(([value])=>Number.isFinite(value));
   var requirementsShown=references.some(([,style])=>style!=='impact-pooled');
   var impactsShown=rows.some(row=>impactByType.has(row.key));
-  var impactNote=impactsShown?'<p class="muted">Weighted impact compares each contact type with scoped pooled AHT and uses its eligible share of handled contacts. Positive values are favorable.</p>':'';
+  var impactNote=impactsShown?'<p class="muted">Weighted impact compares each contact type with scoped pooled '+ml()+' and weights the gap by its share of eligible observations. Positive values are favorable.</p>':'';
   var countBasis=R.metric?.unit!=="seconds"?'<th>'+esc(gCountLabel(R))+'</th>':'';
   var table='<div class="scroll" tabindex="0" aria-label="Contact type volumes and KPI"><table><thead><tr><th>Contact type</th><th>Handled contacts</th>'+countBasis+'<th>'+esc(chartMetricAxis())+'</th><th>Applicable requirements</th>'+(impactsShown?'<th>Signed weighted impact</th>':'')+'</tr></thead><tbody>'
     +rows.map(row=>'<tr><th scope="row">'+esc(row.key)+'</th><td>'+n0(row.count)+'</td>'+(countBasis?'<td>'+n0(row.eligible)+'</td>':'')+'<td>'+esc(fcValue(row.value))+'</td><td>'
@@ -3223,9 +3325,11 @@ function gContactPerformance(R,evidence=false){
   var top=rows.reduce((a,b)=>b.count>a.count?b:a),tied=rows.filter(row=>row.count===top.count);
   var takeaway=low===maxValue?'All displayed contact types recorded '+fcValue(low)+'.':
     names(low)+' recorded the lowest result at '+fcValue(low)+', and '+names(maxValue)+' recorded the highest at '+fcValue(maxValue)+'.';
+  var priority=rows.filter(row=>impactByType.get(row.key)?.vital_few&&impactByType.get(row.key).impact<0);
   var state=observedState(R);
   return '<section id="g-contact-performance" class="g-chart-container-box"><div class="g-observed-filters">'+reportChartControls("contact",state)+'</div>'
-    +gSlideResult(gSlideTakeaway(takeaway,'<h4>Facts</h4><p>'+esc(tied.map(row=>row.key).join(', ')+' had the highest volume at '+n0(top.count)+' handled contacts'+(tied.length>1?' each':'')+'.')+'</p>'),
+    +gSlideResult(gSlideTakeaway(takeaway,'<h4>Facts</h4><p>'+esc(tied.map(row=>row.key).join(', ')+' had the highest volume at '+n0(top.count)+' handled contacts'+(tied.length>1?' each':'')+'.')+'</p>'
+      +gNextSteps(priority.map(row=>row.key),'Review handled volume and the unfavorable weighted gap for each contact type.')),
       '<h4>Contact type volume versus '+esc(ml())+'</h4>'+(state.contactView==="table"?table:graph)
       +(requirementsShown?'':'<p class="muted">No single requirement is shown for this comparison. See applicable requirements by contact type in the table.</p>'))
     +'<button type="button" class="g-linkbtn" data-chapter="g-contact-evidence">See contact type results in Evidence</button></section>';
@@ -3598,7 +3702,7 @@ function requirementsPanel(R,evidence=false){
     +'<div class="g-insights-labeled-chart">'
     +(state.requirementsView==="table"?requirementsTable(periods):requirementsGraphic(periods,weighted,R.analysis_setup?.direction||R.metric?.direction))+'</div>';
   return '<section id="g-requirements-panel" class="g-chart-container-box">'+gSlideResult(
-    gSlideTakeaway(answers,factsHtml+'<button type="button" class="g-linkbtn" data-chapter="g-requirements-evidence">See account requirements in Evidence</button>'),visual,true)+'</section>';
+    gSlideTakeaway(answers,factsHtml+'<button type="button" class="g-linkbtn" data-chapter="g-requirements-evidence">See account requirements in Evidence</button>'),visual)+'</section>';
 }
 function stabilityDates(R){
   var state=observedState(R);
@@ -3618,7 +3722,7 @@ function stabilityPreview(R,draft){
 }
 function stabilityWeeks(R,dates=stabilityDates(R)){
   var assessment=R.target_assessment;
-  var account=R.metric?.metric_id==='aht'?R.daily_references?.account:null;
+  var account=R.daily_references?.account;
   var periods=account?account.intervals.map(interval=>({...interval,rule:interval.target_rule,
     lower:interval.lower_specification_limit,upper:interval.upper_specification_limit}))
     :assessment?.status==='published'?assessment.periods.filter(requirementsTarget).map(period=>({...period,rule:period.target_rule})):[];
@@ -3659,7 +3763,7 @@ function stabilityScope(R){
 }
 function stabilityWeekEvents(R,weeks){
   var byWeek=new Map();
-  if(!R.calendar_events?.length||(R.metric?.metric_id==='aht'&&!dailyEventSourceCurrent(R)))return byWeek;
+  if(!R.calendar_events?.length||(hasRecordedEvents(R)&&!dailyEventSourceCurrent(R)))return byWeek;
   var lines=new Set(R.scope.lines_of_business);
   for(var event of R.calendar_events){
     if(!event.lines_of_business.some(line=>lines.has(line)))continue;
@@ -3728,7 +3832,7 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   var key=moving?'range':'value',chart=moving?'moving_range':'individuals';
   var values=weeks.map(week=>week[key]).filter(Number.isFinite);
   if(!values.length)return {markup:'<p>No eligible complete weeks are available for this scope.</p>',spans:[]};
-  var useScale=!moving&&R.metric?.metric_id==='aht';
+  var useScale=!moving;
   var gutter=useScale&&weeks.some(week=>week.reference)?40:0;
   var top=18,bottom=227,context=document.createElement('canvas').getContext('2d');
   var detailFont=style.getPropertyValue('--font-chart-detail'),axisFont=style.getPropertyValue('--font-size-chart');
@@ -3787,10 +3891,11 @@ function stabilityPlotContent(R,weeks,moving,width,style){
     previous=true;
     points.push({at,level,label,week,hits,events});
   });
-  var halfStep=weeks.length>1?(right-left)/((weeks.length-1)*2):(right-left)/2;
+  var slot=Math.max(1,(right-left)/Math.max(1,weeks.length-1)),halfStep=slot/2;
+  var sizes=runChartMarkSizes(slot,4.5);
   var references=segments.map(({start,end,reference})=>({ref:reference,x1:Math.max(left,x(start)-halfStep),x2:Math.min(right,x(end)+halfStep)}));
   var spans=useScale?references:[], geometry={left,right,top,bottom,width};
-  var id='stability-individuals', layers=runReferenceLayers(spans,{id,...geometry,low,high,y,width:4.5,
+  var id='stability-individuals', layers=runReferenceLayers(spans,{id,...geometry,low,high,y,width:sizes.trace,
     trace:(value,color)=>runLevelTrace(weeks,value,color,x,y)});
   var fills=spans.filter(({ref})=>Number.isFinite(ref.lower)&&Number.isFinite(ref.upper)).map(({ref,x1,x2})=>
     `<rect class="dt-band" x="${x1}" y="${y(ref.upper)}" width="${x2-x1}" height="${y(ref.lower)-y(ref.upper)}"/>`).join('');
@@ -3839,10 +3944,10 @@ function stabilityPlotContent(R,weeks,moving,width,style){
     +(spans.length?' data-reference-index="'+spans.findIndex(({ref,x1,x2})=>ref===week.reference&&at>=x1&&at<=x2)+'"':'')
     +readingDetailAttributes(label)+' data-week-start="'+week.start+'"></span>').join('');
   var markup='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'
-    +(moving?'Moving Range for weekly AHT':'Observed weekly '+esc(ml()))+'">';
+    +(moving?'Moving Range for weekly ':'Observed weekly ')+esc(ml())+'">';
   if(spans.length)markup+='<defs><path id="'+id+'-trace" d="'+path+'"/>'+layers.defs+'</defs>'+layers.scales+fills+layers.washes;
   markup+=plot+'<path class="g-stability-trace dt-context-trace" d="'+path+'"/>'+layers.overlays+guides+'</svg>'+markers;
-  return {markup,spans,geometry};
+  return {markup,spans,geometry,sizes,hitWidth:Math.min(20,slot)};
 }
 function stabilityChart(R,weeks,moving){
   if(!weeks.some(week=>Number.isFinite(moving?week.range:week.value)))return '<p>No eligible complete weeks are available for this scope.</p>';
@@ -3862,7 +3967,14 @@ function layoutStabilityPlot(plot){
   var R=xR(),width=plot.clientWidth;
   if(!R||width<240||stabilityPlotWidths.get(plot)===width)return;
   stabilityPlotWidths.set(plot,width);
-  var {markup,spans,geometry}=stabilityPlotContent(R,stabilityWeeks(R),plot.dataset.chart==='moving_range',width,getComputedStyle(plot));
+  var {markup,spans,geometry,sizes,hitWidth}=stabilityPlotContent(R,stabilityWeeks(R),plot.dataset.chart==='moving_range',width,getComputedStyle(plot));
+  if(sizes){
+    const style=plot.style;
+    style.setProperty('--stability-trace-width',sizes.trace+'px');
+    style.setProperty('--stability-dot-size',sizes.dot+'px');
+    style.setProperty('--stability-event-size',sizes.event+'px');
+    style.setProperty('--stability-hit-width',hitWidth+'px');
+  }
   if(!plot.firstElementChild)plot.innerHTML=markup;
   else{
     var replacement=document.createElement('template');
@@ -3888,14 +4000,18 @@ function stabilityScale({rate,flagged,eligible}){
     +'<div class="g-stability-scale-labels"><span class="g-stability-rate">Out-of-control points '+percent+'</span></div>'
     +'<div class="g-stability-scale-ticks" aria-hidden="true">'+ticks+'</div></div>';
 }
+const stabilityTableDate=new Intl.DateTimeFormat('en-US',{month:'short',day:'2-digit',year:'numeric',timeZone:'UTC'});
+const stabilityTableValue=new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 function stabilitySignals({rate,flagged}){
   if(rate===null)return '<p>Out-of-control points were not assessed.</p>';
   if(!flagged.length)return '<p>No out-of-control points in the evaluated period.</p>';
-  return '<div class="scroll g-requirements-table" tabindex="0" aria-label="Out-of-control points"><table><thead><tr>'
+  return '<div class="scroll g-requirements-table g-stability-out-of-control" tabindex="0" role="region" aria-label="Out-of-control points"><table><colgroup><col><col><col></colgroup><thead><tr>'
     +'<th scope="col">Week ending</th><th scope="col">Value</th><th scope="col">Test pattern</th>'
     +'</tr></thead><tbody>'+flagged.map(week=>{
       var patterns=[...new Set(week.hits.map(stabilityPattern))].join(', ');
-      return '<tr><th scope="row">'+esc(week.end)+'</th><td>'+esc(fcValue(week.value))+'</td><td>'+esc(patterns)+'</td></tr>';
+      const date=stabilityTableDate.format(new Date(week.end+'T00:00:00Z'));
+      const value=stabilityTableValue.format(week.value/durationFactor())+' '+durationUnitSymbol();
+      return '<tr><th scope="row"><time datetime="'+esc(week.end)+'">'+esc(date)+'</time></th><td>'+esc(value)+'</td><td>'+esc(patterns)+'</td></tr>';
     }).join('')+'</tbody></table></div>';
 }
 function stabilityEvidenceHits(hits){
@@ -3969,7 +4085,7 @@ function stabilityPanel(R){
     :'There are no eligible complete weekly results for this scope.';
   var readings=eligible.map(week=>week.value);
   var facts=readings.length?'<li>'+esc('Observed weekly '+ml()+' ranged from '
-    +fcValue(Math.min(...readings))+' to '+fcValue(Math.max(...readings)))+'.</li>':'',steps='';
+    +fcValue(Math.min(...readings))+' to '+fcValue(Math.max(...readings)))+'.</li>':'';
   if(rate!==null){
     answer=flagged.length?'The analyzed period is not stable with '+stabilityPercent(rate)+' of data points identified as out-of-control.'
       :R.stability.interpret_individuals?'The analyzed period is stable with no data points identified as out-of-control.'
@@ -3981,20 +4097,19 @@ function stabilityPanel(R){
     facts='<li>There are '+n0(flagged.length)+' points identified to be out-of-control within the selected period.'
       +(patterns?'<ul>'+patterns+'</ul>':'')+'</li><li>The analysis period has an identified '+stabilityPercent(rate)
       +' out-of-control across '+n0(eligible.length)+' datapoints.</li>';
-    if(flagged.length)steps='<h4>Next steps</h4><ul><li>Evaluate the weeks identified as out-of-control for possible preventive or corrective actions.</li></ul>';
-    else if(R.stability.interpret_individuals)steps='<h4>Next steps</h4><ul><li>Identify and maintain activities that contribute to limiting the impact of unplanned causes of variation in the score.</li></ul>';
+
   }
   var takeaway=gSlideTakeaway(answer,'<h4>Facts</h4><ul>'+facts+chartPeriodFact(stabilityScope(R))
-    +'</ul>'+steps+'<button type="button" class="g-linkbtn" data-chapter="g-stability-evidence">See Stability in Evidence</button>');
+    +'</ul><button type="button" class="g-linkbtn" data-chapter="g-stability-evidence">See Stability in Evidence</button>');
   var [view,label]=reportViews("stability",state).current;
   var metric='Weekly weighted '+(metricId()==='aht'?ml():ML())+' ('+(durationUnit()==='points'?'points':durationUnitSymbol())+')';
   var body=view==='scale'?stabilityScale(selection):view==='out-of-control'?stabilitySignals(selection):stabilityChart(R,weeks,view==='moving-range');
   var visual=reportChartControls("stability",state)+'<h4 class="g-insights-chart-title">'+esc(metric+' · '+label)+'</h4>'
     +'<div class="g-insights-labeled-chart">'+body+'</div>';
-  return '<section id="g-stability-panel" class="g-chart-container-box">'+gSlideResult(takeaway,visual,true)+'</section>';
+  return '<section id="g-stability-panel" class="g-chart-container-box">'+gSlideResult(takeaway,visual)+'</section>';
 }
 function showsStability(R){
-  return gReportViews(R).includes("time")&&gShowsPanel(R,"trend");
+  return gReportViews(R).includes("time")&&(gShowsPanel(R,"trend")||gShowsPanel(R,"recorded-events"));
 }
 function scoreCutoffBasis(R){
   var cutoff=R.metric?.cutoff_share;
@@ -4016,17 +4131,22 @@ function gCh1(R){
       ?fcValue(latest.value)+' '+(latest.gap===0?'was on':latest.target_met?'met':'missed')+' the '+fcValue(latest.target)+' target from '+latest.first_date+' to '+latest.last_date+'.'
       :'See the table for the applicable specification limits and period results.'):assessment?.reason;
     body+=gQuestionSlide("g-slide-requirements","How did performance compare with the applicable requirements?",
-      gSlideTakeaway(takeaway||'Review the applicable requirements in the table.')+requirements);
+      gSlideResult(gSlideTakeaway(takeaway||'Review the applicable requirements in the table.'),requirements));
   }
   else if(xHasTarget(R)===null&&(!assessment||assessment.status==="published"))body+='<p class="muted">No account target or specification limit applies to this selection.</p>';
   if(showsStability(R)){
-    var daily=gQuestionSlide("g-slide-daily","How did "+ml()+" change day to day?",gObservedTrend(R));
-    var stability=gQuestionSlide("g-slide-stability","Was performance stable over time?",stabilityPanel(R));
-    body+=R.metric?.metric_id==="aht"?stability+daily:daily+stability;
+    const split=hasRecordedEvents(R);
+    const daily=!split||gShowsPanel(R,"trend")
+      ?gQuestionSlide("g-slide-daily","How did "+ml()+" change day to day?",split?baselineDailyChart(R):gObservedTrend(R)):'';
+    const events=split&&gShowsPanel(R,"recorded-events")
+      ?gQuestionSlide("g-slide-recorded-events","How did "+ml()+" differ on days with recorded events?",gObservedTrend(R)):'';
+    const stability=gQuestionSlide("g-slide-stability","Was performance stable over time?",stabilityPanel(R));
+    body+=split?stability+events+daily:daily+stability;
   }
   if(gShowsPanel(R,"groups")&&views.indexOf("group")!==-1&&R.by_group&&!R.by_groups){
     var grouping=R.scope.group_by==="line_of_business"?"Line of Business":"Contact driver";
-    body+=gQuestionSlide("g-slide-group-totals","Where did "+ml()+" differ?",gSlideTakeaway('Results are grouped by '+grouping+'.')+xPanel(R,"group"));
+    body+=gQuestionSlide("g-slide-group-totals","Where did "+ml()+" differ?",
+      gSlideResult(gSlideTakeaway('Results are grouped by '+grouping+'.'),xPanel(R,"group")));
   }
   if(gShowsPanel(R,"groups"))body+=gQuestionSlide("g-slide-groups","How did performance compare across groups?",gReportGroups(R));
   if(gShowsPanel(R,"distribution"))body+=gQuestionSlide("g-slide-distribution","How widely did performance vary across agents?",gHistogram(R));
@@ -4072,7 +4192,8 @@ function gBoxMedianCallouts(R,boxes,peer,format=fcValue,ranks=gBoxMedianRanks(R,
   return gSlideTakeaway(names(best)+(best.length===1?' had':' shared')+' the most favorable typical result. '+names(worst)
     +(worst.length===1?' had':' shared')+' the least favorable.', '<h4>Facts</h4><p>'+esc(typical(best)+'. '+typical(worst)
       +'. The middle half of eligible agent results ranged from '+spread(best[0])+' in '+best[0].key+' and from '+spread(worst[0])
-      +' in '+worst[0].key+'.')+'</p>');
+      +' in '+worst[0].key+'.')+'</p>'+gNextSteps(worst.map(group=>group.key),
+        'Review the median, spread and eligible agent count for each group in Evidence.'));
 }
 function boxSelection(R,state){
   if(!R.group_charts)return null;
@@ -4337,7 +4458,7 @@ function redrawObservedChart(id,html){
 }
 const dailyAhtPlotObserver=new ResizeObserver(entries=>{
   const R=xR();
-  if(R)for(const entry of entries)drawDailyAht(entry.target,dailyAhtSelection(R,observedState(R)));
+  if(R)for(const entry of entries)drawRecordedEvents(entry.target,dailyEventSelection(R,observedState(R)));
 });
 let observedDailyAhtPlot;
 function sizeChartTables(){
@@ -4351,7 +4472,7 @@ function sizeChartTables(){
       const mean=parseFloat(row.style.getPropertyValue('--gap-mean'))/100*callout.clientWidth;
       label.style.left=Math.max(0,Math.min(callout.clientWidth-label.offsetWidth,mean-label.offsetWidth/2))+'px';
       const segment=row.querySelector('.dt-gap-segment');
-      if(segment&&getComputedStyle(segment.lastElementChild).display!=='none')short.add(segment.dataset.performance);
+      if(segment&&getComputedStyle(segment.lastElementChild).display!=='none')short.add(segment.dataset.gapSide);
     }
     for(const item of frame.querySelectorAll('[data-short-key]'))item.hidden=!short.has(item.dataset.shortKey);
   }
@@ -4368,7 +4489,7 @@ function sizeChartTables(){
     observedDailyAhtPlot=dailyPlot;
     if(dailyPlot)dailyAhtPlotObserver.observe(dailyPlot);
   }
-  if(dailyPlot&&xR())drawDailyAht(dailyPlot,dailyAhtSelection(xR(),observedState(xR())));
+  if(dailyPlot&&xR())drawRecordedEvents(dailyPlot,dailyEventSelection(xR(),observedState(xR())));
   var expanded=document.querySelector(".g-trend-focus .g-modal-scroll-pane");
   var root=document.getElementById("g-report-presentation");
   if(root&&!root.hidden||expanded){
@@ -4512,11 +4633,12 @@ function fcTrajectory(F){
 }
 function fcChart(F){
   var hist=F.history.map(function(w){return {s:w.start,v:w.value};}),fut=F.forecast.map(function(w){return {s:w.start,v:w.value};}),all=hist.concat(fut),W=640,H=260,L=70,T=14,B=34,Rr=14;
-  var vals=all.map(function(p){return p.v;}).concat(F.forecast.map(week=>week.target).filter(Number.isFinite));
+  var vals=all.map(function(p){return p.v;}).filter(Number.isFinite).concat(F.forecast.map(week=>week.target).filter(Number.isFinite));
   var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals),pad=(hi-lo||1)*0.08;lo-=pad;hi+=pad;
+  if(!Number.isFinite(hi-lo)||hi<=lo)return '<p>The projection chart cannot display this value range. Use Projected weeks or Observed history to inspect the values.</p>';
   var x=function(i){return L+(W-L-Rr)*i/Math.max(all.length-1,1);},y=function(v){return T+(H-T-B)*(1-(v-lo)/(hi-lo));};
   var line=function(a,off){return a.map(function(p,i){return x(i+off).toFixed(1)+','+y(p.v).toFixed(1);}).join(' ');};
-  var joined=[hist[hist.length-1]].concat(fut);
+  var joined=[hist[hist.length-1],...fut];
   var split=(x(hist.length-1)+x(hist.length))/2;
   var step=x(1)-x(0);
   var tgt=F.forecast.map((week,i)=>{
@@ -4525,21 +4647,21 @@ function fcChart(F){
     return '<line class="gc-target" x1="'+(mark-step/2)+'" x2="'+Math.min(W-Rr,mark+step/2)+'" y1="'+level+'" y2="'+level+'"><title>'
       +esc(week.start+' target '+fcValue(week.target))+'</title></line>';
   }).join('');
-  var ticks=[lo+pad,(lo+hi)/2,hi-pad].map(function(v){return '<text x="'+(L-6)+'" y="'+(y(v)+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="currentColor">'+esc(durationNumber(v,false))+'</text><line x1="'+L+'" x2="'+(W-Rr)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'" stroke="currentColor" opacity=".12"/>';}).join('');
-  var legend=[["weekly","Observed weekly "+ml()],["projected","13-week conditional projection",
+  var legend=[["observed","Observed weekly "+ml()],["projected","13-week conditional projection",
     tracePointKey('<i class="dt-dot g-projected-point-key"></i>','g-projected-trace-key')]];
   if(fcHasTarget(F))legend.push(["target","Applicable target"]);
   return chartLegend(legend)+'<figure style="margin:0"><svg class="fc-chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Weekly '+ml()+' with the 13-week conditional projection" style="width:100%;height:auto;color:var(--ink)">'
    +'<rect x="'+split.toFixed(1)+'" y="'+T+'" width="'+(W-Rr-split).toFixed(1)+'" height="'+(H-B-T)+'" fill="var(--slate-200)" fill-opacity=".35"/>'
-   +ticks+tgt+'<text transform="translate(14 '+((H-B+T)/2)+') rotate(-90)" text-anchor="middle" font-size="11" fill="currentColor">'+esc(chartMetricAxis())+'</text>'
+   +runValueGrid(lo,hi,y,L,W-Rr)+tgt+'<path class="g-run-axis" d="M'+L+' '+T+'V'+(H-B)+'H'+(W-Rr)+'"/>'
+   +'<text class="g-run-tick" transform="translate(14 '+((H-B+T)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>'
    +'<line x1="'+split.toFixed(1)+'" x2="'+split.toFixed(1)+'" y1="'+T+'" y2="'+(H-B)+'" stroke="currentColor" opacity=".3"/>'
-   +'<polyline fill="none" stroke="var(--bar)" stroke-width="2" points="'+line(hist,0)+'"/>'
+   +'<polyline class="g-run-trace" points="'+line(hist,0)+'"/>'
    +'<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 4" points="'+line(joined,hist.length-1)+'"/>'
    +'<text x="'+split+'" y="'+(T+10)+'" text-anchor="end" font-size="10" fill="currentColor">Observed · </text>'
    +'<text x="'+split+'" y="'+(T+10)+'" font-size="10" fill="currentColor">Projected</text>'
    +[0,fut.length-1].map(i=>'<circle class="gc-pt" cx="'+x(hist.length+i)+'" cy="'+y(fut[i].v)+'" r="3"><title>'
      +esc(fut[i].s+' · '+fcValue(fut[i].v))+'</title></circle>').join('')
-   +'<text x="'+L+'" y="'+(H-12)+'" font-size="11" fill="currentColor">Week of '+esc(all[0].s)+'</text><text x="'+(W-Rr)+'" y="'+(H-12)+'" text-anchor="end" font-size="11" fill="currentColor">Week of '+esc(all[all.length-1].s)+'</text></svg>'
+   +runDateTick(L,H-B,'Week of '+all[0].s,'start')+runDateTick(W-Rr,H-B,'Week of '+all[all.length-1].s,'end')+'</svg>'
    +'<figcaption>'+esc('Projection starts '+fut[0].s+' at '+fcValue(fut[0].v)+' and ends '+fut.at(-1).s+' at '+fcValue(fut.at(-1).v)+'.')
    +(Number.isFinite(F.target)?' '+esc('Applicable target '+fcValue(F.target)+'.'):'')+'</figcaption></figure>';
 }
@@ -4577,14 +4699,27 @@ function projectionPanel(R){
     +'<p>Typical error was '+esc(insDifferenceSize(F.model.mad))+' in one-week tests. The full 13-week path has no separate validation.</p>'
     +'<h4>Next step</h4><p>When the next complete week closes, compare its actual result with that week’s projection and any applicable target.</p>','g-forecast-first');
   var visual='<div class="g-observed-filters">'+reportChartControls("projection",state)+'</div><h4 id="g-forecast-trend" data-slide-content-title>Weekly '+ml()+' and the next 13 weeks</h4>'
-   +(mode==="chart"?fcChart(F):forecastValuesTable(F,mode==="history"))
+   +(mode==="chart"?fcChart(F)+projectionScaleSummary(F):forecastValuesTable(F,mode==="history"))
    +'<p class="muted">Prediction ranges and the chance of reaching the target are unavailable.</p>';
   return '<section id="g-projection-panel" class="g-chart-container-box" aria-labelledby="g-forecast-trend">'+gSlideResult(takeaway,visual)
    +'<button type="button" class="g-linkbtn" data-chapter="g-evidence-projection">See how the forecast was built in Evidence</button></section>';
 }
+function projectionScaleNote(value){
+  const scoring=metricScoring(), kind=metricKind();
+  const limits=kind==='percent'?[0,100]:kind==='points'?[scoring?.scale_start,scoring?.scale_end]:[];
+  const [lower,upper]=limits;
+  if(value<lower)return 'Conditional extrapolation below the '+fcValue(lower)+' scale limit.';
+  if(value>upper)return 'Conditional extrapolation above the '+fcValue(upper)+' scale limit.';
+  return '';
+}
+function projectionScaleSummary(F){
+  const notes=[...new Set(F.forecast.map(week=>projectionScaleNote(week.value)).filter(Boolean))];
+  return notes.length?'<p class="muted">'+esc(notes.join(' '))+'</p>':'';
+}
 function forecastValuesTable(F,history=false){
   var label=history?"Observed":"Projected";
   var requirements=!history&&fcHasTarget(F);
+  var notes=!history&&F.forecast.some(w=>projectionScaleNote(w.value));
   function comparison(week){
     if(typeof week.target_met!=='boolean')return 'Unavailable';
     var verdict=week.target_met?'Meets target':'Misses target';
@@ -4594,9 +4729,9 @@ function forecastValuesTable(F,history=false){
     return esc(verdict);
   }
   return '<div class="scroll" tabindex="0" aria-label="'+label+' weekly values"><table><thead><tr><th scope="col">Week of</th><th scope="col" class="n">'+label+' ('+durationUnitSymbol()+')</th>'
-    +(requirements?'<th scope="col">Applicable target</th><th scope="col">Projected comparison</th>':'')+'</tr></thead><tbody>'
+    +(requirements?'<th scope="col">Applicable target</th><th scope="col">Projected comparison</th>':'')+(notes?'<th scope="col">Scale note</th>':'')+'</tr></thead><tbody>'
     +(history?F.history:F.forecast).map(w=>'<tr><th scope="row">'+esc(w.start)+'</th><td class="n">'+fcValue(w.value)+'</td>'
-      +(requirements?'<td>'+(Number.isFinite(w.target)?fcValue(w.target):'—')+'</td><td>'+comparison(w)+'</td>':'')+'</tr>').join('')+'</tbody></table></div>';
+      +(requirements?'<td>'+(Number.isFinite(w.target)?fcValue(w.target):'—')+'</td><td>'+comparison(w)+'</td>':'')+(notes?'<td>'+esc(projectionScaleNote(w.value)||'—')+'</td>':'')+'</tr>').join('')+'</tbody></table></div>';
 }
 function fcEvidence(R){
   var F=R&&R.forecast;if(!F)return '';
@@ -4622,7 +4757,7 @@ function signedComparisonBars(rows,label){
     return '<div class="g-signed-row"><div class="g-signed-label"><strong>'+esc(row.key)+'</strong>'
       +(row.status?'<small class="muted">'+esc(row.status)+'</small>':'')
       +'<span>'+esc(insSignedGap(row.value))+'</span></div>'
-      +'<div class="g-signed-track" aria-hidden="true"><i'+(row.unconfirmed?' class="is-unconfirmed"':'')
+      +'<div class="g-signed-track" aria-hidden="true"><i class="'+(row.value===0?'is-zero':row.unconfirmed?'is-unconfirmed':'')+'"'
       +' style="left:'+(50+Math.min(0,offset))+'%;width:'+Math.abs(offset)+'%"></i></div></div>';
   }).join('')+'<div class="g-signed-axis" aria-hidden="true"><span>−'+esc(displayedBound)+'</span><span>0 '+esc(unit)
     +'</span><span>+'+esc(displayedBound)+'</span></div></div>';
@@ -4652,11 +4787,15 @@ function insSegments(R,evidence=false){
       return '<tr><th scope="row">'+esc(g.key)+'</th><td class="n">'+n0(g.contacts)+'</td><td class="n">'+(g.value===null?'':fcValue(g.value))+'</td><td class="n">'+(g.gap===null?'':insSignedGap(g.gap))+'</td><td>'+verdict+'</td></tr>';}).join('')+'</tbody></table></div>';
   if(evidence)return '<h3>Adjusted group comparison evidence</h3>'+scope+values;
   var cleared=rows.filter(g=>g.checks?.some(check=>check.check==="Gap large enough"&&check.outcome==="pass")).length;
+  var priority=rows.filter(row=>Number.isFinite(row.gap)&&row.adverse
+    &&['Enough contacts','Mix held constant','Enough agents','Gap large enough'].every(name=>
+      row.checks?.some(check=>check.check===name&&check.outcome==='pass')));
   var takeaway=cleared?n0(cleared)+(cleared===1?' group cleared':' groups cleared')+' the descriptive 5% gap screen. Adjusted differences remain descriptive.'
     :gaps.length?'No group cleared all the coverage and descriptive size screens. Adjusted differences shown here describe the observed shared work.'
     :'No adjusted differences are available for this grouping.';
   return '<div id="g-factor-segments"><div class="g-observed-filters">'+reportChartControls("gaps",state)+'</div>'+scope
-    +'<h4>'+esc(label)+'</h4>'+gSlideTakeaway(takeaway)+(state.factorView==="table"?values:signedComparisonBars(gaps,label+" adjusted differences from the rest"))
+    +'<h4>'+esc(label)+'</h4>'+gSlideResult(gSlideTakeaway(takeaway,gNextSteps(priority.map(row=>row.key),
+      'Review the adjusted gap and eligible observation count for each group in Evidence.')),state.factorView==="table"?values:signedComparisonBars(gaps,label+" adjusted differences from the rest"))
     +'<button type="button" id="g-gaps-evidence-link" class="g-linkbtn" data-chapter="g-gaps-evidence">See adjusted group values in Evidence</button></div>';
 }
 function insPairwise(I,selected,evidence=false){
@@ -4803,7 +4942,9 @@ function insConstraints(I,R,evidence=false){var c=I.constraints;if(!c||!c.pools.
     +(un>0?'<p>'+percentNumber(un*100)+'% of recorded controllable counts had unclassified labels.</p>':'');
   return '<section id="g-constraints" class="g-chart-container-box"><div class="g-observed-filters">'+reportChartControls("constraints",state)+'</div>'
     +gSlideResult(gSlideTakeaway(takeaway,'<h4>Facts</h4><p>'+esc(countFacts)+'</p><p>'+sourceFacts+'</p><p>'+cutoffFacts+'</p>'
-      +(un>0?'<p>'+Math.round(un*100)+'% had unclassified labels.</p>':'')),
+      +(un>0?'<p>'+Math.round(un*100)+'% had unclassified labels.</p>':'')
+      +gNextSteps(rows.filter(row=>row.vital_few&&!row.unclassified).map(row=>row.level1+' · '+row.level2),
+        'Check the recorded controllable occurrences for each constraint before choosing an action.')),
       '<h3>Share of controllable constraints by label</h3>'+(state.constraintsView==="table"?table:
       paretoChart(rows.map(p=>({...p,key:p.level2})),"Share of controllable constraints","Share of recorded controllable counts (%)","Labels within the 80% cutoff")))+'</section>';
 }
@@ -4863,7 +5004,9 @@ function insContactDriverImpact(impact,R,evidence=false){
     :'The selected work mix has no unfavorable driver gap to rank.';
   return '<section id="g-driver-impact" class="g-chart-container-box"><div class="g-observed-filters">'+reportChartControls("drivers",state)+'</div>'
     +gSlideResult(gSlideTakeaway(answer,
-      '<h4>Facts</h4><p>The selected '+kpi+' average was '+esc(fcValue(impact.baseline))+'. Impact combines each driver’s difference with eligible volume.</p>'+adverse),
+      '<h4>Facts</h4><p>The selected '+kpi+' average was '+esc(fcValue(impact.baseline))+'. Impact combines each driver’s difference with eligible volume.</p>'+adverse
+      +gNextSteps(impact.rows.filter(row=>row.vital_few&&row.impact<0).map(row=>row.key),
+        'Review eligible volume and the contribution to the unfavorable gap for each contact driver.')),
       '<h3>Contact driver impact</h3>'+(state.driversView==="table"?table:
       paretoChart(impact.rows,"Contact driver impact","Share of absolute impact (%)","Drivers within the 80% cutoff")))+'</section>';
 }
@@ -5449,18 +5592,17 @@ function scenarioGlidepath(s,R){
   function x(week){return left+(right-left)*week/last.week;}
   function y(value){return hi===lo?(top+bottom)/2:bottom-(bottom-top)*(value-lo)/(hi-lo);}
   var heading='Illustrative '+last.week+'-week glidepath';
-  var ticks=[min,max].map(function(value){
-    return '<line x1="'+left+'" x2="'+right+'" y1="'+y(value)+'" y2="'+y(value)+'" stroke="var(--line)"/>'
-      +'<text x="'+(left-8)+'" y="'+(y(value)+4)+'" text-anchor="end">'+esc(fcValue(value))+'</text>';
-  }).join('');
+  var ticks=runValueGrid(min,max,y,left,right);
   var line=points.map(function(p){return x(p.week)+','+y(p.value);}).join(' ');
   var markers=points.map(function(p){
     var label=p.week?'Week '+p.week:'Baseline';
     return '<circle cx="'+x(p.week)+'" cy="'+y(p.value)+'" r="3.5" fill="var(--accent)"><title>'+esc(label+': '+fcValue(p.value))+'</title></circle>'
-      +'<text x="'+x(p.week)+'" y="148" text-anchor="middle">'+label+'</text>';
+      +runDateTick(x(p.week),bottom,label);
   }).join('');
   return '<div><div class="g-chart-head"><strong>'+heading+'</strong><span class="muted">Equal improvement each week</span></div>'
-    +''+'<svg class="g-chart" viewBox="0 0 640 162" role="img" aria-label="'+esc(heading+' for '+ml())+'">'+ticks
+    +'<svg class="g-chart" viewBox="0 0 640 162" role="img" aria-label="'+esc(heading+' for '+ml())+'">'+ticks
+    +'<path class="g-run-axis" d="M'+left+' '+top+'V'+bottom+'H'+right+'"/>'
+    +'<text class="g-run-tick" transform="translate(14 '+((top+bottom)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>'
     +(Number.isFinite(s.target)?'<line class="gc-target" x1="'+left+'" x2="'+right+'" y1="'+y(s.target)+'" y2="'+y(s.target)+'"/><text x="'+right+'" y="'+(y(s.target)-4)+'" text-anchor="end">Target '+esc(fcValue(s.target))+'</text>':'')
     +'<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" points="'+line+'"/>'+markers+'</svg></div>';
 }
@@ -5595,7 +5737,8 @@ function externalPriorityPanel(I,evidence=false){
     +(result.pool_ledger||[]).map(row=>'<li>'+esc(row.label+' · '+displayNumber(row.count,0,6)+' occurrences · '+percentNumber(row.share*100)
       +'% · '+(row.priority?'Priority':'Outside the 80% priority set')+(row.unclassified?' · Needs classification':''))+'</li>').join('')+'</ul></details>':'';
   return evidence?'<h3>External priorities</h3><p>'+esc(answer)+'</p>'+facts+(rows.length?table:'')+ledger
-    :rows.length?gSlideResult(gSlideTakeaway(answer,facts),table):gSlideTakeaway(answer,facts);
+    :rows.length?gSlideResult(gSlideTakeaway(answer,facts+gNextSteps(rows.map(row=>row.category+' · '+row.title),
+      'Confirm which baseline dates the recorded issue counts cover before raising each issue with external owners.')),table):gSlideTakeaway(answer,facts);
 }
 function gCh4(R){
   var I=R&&R.insights;
@@ -5637,7 +5780,8 @@ function gCh5(R){
   var body=reportCard("g-evidence-guide",intro+chartScopeTitle(R,"Report dates")+notes)
     +reportCard("g-requirements-evidence",R.account_requirements?requirementsPanel(R,true):'')
     +reportCard("g-evidence-calculation",'<h3>Technical evidence</h3>'+files+xEvidence()+matchEvidence(R))
-    +reportCard("g-trend-evidence",gReportViews(R).includes("time")?trendEvidence(R):'')
+    +reportCard("g-trend-evidence",gReportViews(R).includes("time")?(hasRecordedEvents(R)?baselineDailyEvidence(R):trendEvidence(R)):'')
+    +reportCard("g-recorded-events-evidence",hasRecordedEvents(R)&&gReportViews(R).includes("time")&&gShowsPanel(R,"recorded-events")?trendEvidence(R):'')
     +reportCard("g-stability-evidence",showsStability(R)?stabilityEvidence(R):'')
     +reportCard("g-volume-evidence",gReportViews(R).includes("time")&&Array.isArray(R.report_panels)&&gShowsPanel(R,"volume")?reportVolumeEvidence(R):'')
     +reportCard("g-hourly-evidence",R.hourly_heatmap&&gShowsPanel(R,"hourly")?gHourlyHeatmap(R):'')
@@ -5684,9 +5828,9 @@ function gEvidenceSourceRoles(R,id){
     "g-factor-period-change":[["primary","KPI and work shares by period"]],
     "g-slide-scenario":I?.scenario&&!I.scenario.blocked?[["primary","Observed KPI baseline"],["D09","Recorded controllable constraints behind the modeled lift"]]:[]
   };
-  if(id==="g-slide-daily"){
-    var hasEvents=R.metric?.metric_id==="aht"?dailyAhtSelection(R,state).events.length
-      :state.events&&trendSelection(R,state).events.length;
+  if(id==="g-slide-daily"||id==="g-slide-recorded-events"){
+    var hasEvents=id==="g-slide-recorded-events"?dailyEventSelection(R,state).events.length
+      :!hasRecordedEvents(R)&&state.events&&trendSelection(R,state).events.length;
     return [["primary","Daily KPI values"],...(hasEvents?[["D08","Calendar events in the applied scope"]]:[])];
   }
   if(id==="g-slide-hourly"&&R.hourly_heatmap){
@@ -5743,7 +5887,7 @@ function gOrganizeEvidence(R,page){
   if(!article)return;
   var entries={
     "g-slide-requirements":["g-requirements-evidence"],
-    "g-slide-daily":["g-trend-evidence"],"g-slide-stability":["g-stability-evidence"],
+    "g-slide-daily":["g-trend-evidence"],"g-slide-recorded-events":["g-recorded-events-evidence"],"g-slide-stability":["g-stability-evidence"],
     "g-slide-hourly":["g-hourly-evidence"],"g-slide-volume":["g-volume-evidence"],
     "g-slide-groups":["g-box-evidence"],"g-slide-distribution":["g-histogram-evidence"],"g-slide-agents":["g-agents-evidence"],
     "g-slide-relationships":["g-evidence-relationships"],"g-factor-comparisons":["g-gaps-evidence","g-evidence-comparisons"],
@@ -5955,7 +6099,7 @@ function gSummaryReadout(R,tiles){
 function gInsights(){
   S.xblocks=[];var R=xR();if(!R)return '<h1>Insights</h1>';
   var full=S.page==="full-insights";
-  var tools='<div class="g-report-utilities">'+(full?'<button type="button" class="g-linkbtn" id="g-back-insights" data-go="insights">← Back to Insights</button>':'')
+  var tools='<div class="g-report-utilities">'+(full?'<button type="button" class="btn secondary g-linkbtn" id="g-back-insights" data-go="insights">← Back to Insights</button>':'')
     +'<button type="button" class="btn secondary g-export-launcher" id="g-export-presentation" aria-haspopup="dialog">Export presentation</button></div>';
   if(R.value===null)return '<div class="g-insights-viewport-container">'+tools+withR(R,pageInsights)+'</div>';
   var views=gReportViews(R);
@@ -5982,12 +6126,12 @@ function gInsights(){
    +'<div class="g-summary-bottom-dock">'+deck+'</div></div></section>'
    +gCh1(R)+(gHas(R,"factors")?gCh3(R):"")+(gHas(R,"ahead")?gCh2(R):"")+(gHas(R,"help")?gCh4(R):"")
    +'<p class="g-evidence-entry"><button type="button" class="btn secondary" data-chapter="chapter-evidence">Go through the details that build this presentation in the Evidence page</button></p></div>'
-   +'<div class="g-insights-viewport-container" id="g-report-evidence" hidden><p class="g-evidence-return"><button type="button" class="g-linkbtn" id="g-return-from-evidence">← Back to presentation</button></p>'+gCh5(R)+'</div>';
+   +'<div class="g-insights-viewport-container" id="g-report-evidence" hidden><p class="g-evidence-return"><button type="button" class="btn secondary g-linkbtn" id="g-return-from-evidence">← Back to presentation</button></p>'+gCh5(R)+'</div>';
   return h;
 }
 var G_SLIDE_NAV_LABELS={
   "g-slide-requirements":"Account requirements","g-slide-score-cutoff":"Score cutoffs",
-  "g-slide-daily":"Daily trend","g-slide-stability":"Stability","g-slide-hourly":"Day and hour","g-slide-volume":"Busiest dates",
+  "g-slide-daily":"Daily trend","g-slide-recorded-events":"Recorded events","g-slide-stability":"Stability","g-slide-hourly":"Day and hour","g-slide-volume":"Busiest dates",
   "g-slide-group-totals":"Group totals","g-slide-groups":"Group distributions",
   "g-slide-distribution":"Agent distribution","g-slide-agents":"Agent and group heatmap",
   "g-slide-relationships":"Weekly relationships","g-factor-comparisons":"Group vs. rest",
@@ -6131,7 +6275,7 @@ function gGoChapter(id,trigger){
       openChapter:nav.querySelector('[data-chapter-toggle][aria-expanded="true"]')?.dataset.chapterToggle
     };
     evidence.querySelector('#g-return-from-evidence').textContent=
-      el.closest('#g-trend-evidence')&&xR()?.metric?.metric_id==="aht"?'← Return to Daily trend':'← Back to presentation';
+      el.closest('#evidence-g-slide-recorded-events')?'← Return to Recorded events':'← Back to presentation';
     var guide=presentation.querySelector(".g-guide.is-open");
     if(guide){
       var originRect=evidence.reportOrigin.trigger?.getBoundingClientRect();
@@ -6157,8 +6301,8 @@ function gGoChapter(id,trigger){
   var hd=el.matches("h1,h2,h3,h4")?el:el.querySelector("h1,h2,h3,h4")||el;if(!hd.hasAttribute("tabindex"))hd.setAttribute("tabindex","-1");hd.focus({preventScroll:true});
   gNav();
 }
-function positionChartFilter(){
-  if(!chartFilter)return;
+function positionChartFilter(event){
+  if(!chartFilter||(event?.type==='scroll'&&chartFilter.panel.contains(event.target)))return;
   var anchor=chartFilter.trigger.getBoundingClientRect();
   if(!chartFilter.trigger.checkVisibility()||anchor.bottom<=0||anchor.top>=window.innerHeight){closeChartFilter();return;}
   positionChartPopover(chartFilter.panel,chartFilter.trigger);
@@ -6204,23 +6348,114 @@ function gSampleTab(){var T=S.sample||{};
    +(T.confirm?'<p class="notice info" role="alert">This replaces your current setup and data in this session.</p><div class="actions"><button type="button" class="btn" id="sample-go">Replace and inject</button><button type="button" class="btn secondary" id="sample-cancel">Cancel</button></div>'
      :'<div class="actions"><button type="button" class="btn" id="sample-run"'+(T.busy?' disabled':'')+'>Inject sample configuration, data, and scope</button></div>')
    +(T.busy?'<p role="status">'+esc(T.step)+'</p>':'')+'</div>';}
+async function sampleCsv(set,name){
+  const response=await athenaFetch('/api/sample/file/'+encodeURIComponent(name)+'?set='+set);
+  if(!response.ok)throw Error('Could not read '+name+'.');
+  return new File([await response.blob()],name,{type:'text/csv'});
+}
+function positionSamplePicker(){
+  const panel=document.querySelector('.ds-sample-panel:popover-open');
+  if(!panel)return;
+  const trigger=document.querySelector('[popovertarget="'+panel.id+'"]');
+  const anchor=trigger.getBoundingClientRect(),pane=trigger.closest('.g-modal-scroll-pane')?.getBoundingClientRect();
+  if(pane&&(anchor.bottom<=pane.top||anchor.top>=pane.bottom))panel.hidePopover();
+  else positionChartPopover(panel,trigger,true);
+}
+document.addEventListener('toggle',event=>{
+  if(event.target.classList?.contains('ds-sample-panel')&&event.newState==='open')positionSamplePicker();
+},true);
+document.addEventListener('scroll',event=>{
+  if(event.target.matches?.('.g-modal-scroll-pane'))positionSamplePicker();
+},{capture:true,passive:true});
+window.addEventListener('resize',positionSamplePicker);
+async function uploadDatasetSample(set){
+  const modal=S.modal,view=dsView(modal.tab);
+  const trigger=document.getElementById('ds-sample-trigger');
+  const panel=document.getElementById('ds-sample-panel');
+  const status=document.getElementById('ds-sample-status');
+  const optional=view.tier==='optional',slot=optional?optionalSlot(view.id):null;
+  const generation=optional?slot.generation:uploadGeneration;
+  const current=()=>trigger.isConnected&&S.modal===modal&&!modal.closing
+    &&generation===(optional?slot.generation:uploadGeneration);
+  panel.hidePopover();
+  trigger.disabled=true;
+  status.textContent='Reading sample dataset…';
+  try{
+    const response=await athenaFetch('/api/sample?set='+set);
+    if(!response.ok)throw Error('The sample set is unavailable.');
+    const {setup,available,alternate_available=[]}=await response.json();
+    const alternate=!optional&&view.code!==setup.primary.module;
+    const name=optional?setup.optional[view.id]:alternate?setup.alternate_primary?.[view.code]:setup.primary.file;
+    if(!name||!(alternate?alternate_available:available).includes(name))throw Error('This dataset is unavailable in the sample set.');
+    if(!current())return;
+    const file=await sampleCsv(set,name);
+    if(!current())return;
+    if(optional)await uploadOptional(view.id,file);
+    else await upload(file);
+  }catch(error){
+    if(current())status.textContent=error.message||'The sample dataset could not be read. Try again.';
+  }finally{
+    if(current()){
+      trigger.disabled=false;
+      trigger.focus({preventScroll:true});
+    }
+  }
+}
+function sampleConfigurationModel(setup){
+  const account=setup.account,model=blankModel();
+  Object.assign(model.acc,{id:account.id,tz:account.timezone,covFrom:account.coverage_start||'',covLast:account.coverage_last||''});
+  model.profile=wJ(setup.profile);
+  return model;
+}
+async function loadSampleConfiguration(set){
+  const wiz=S.wiz,modal=S.modal,generation=wizardGeneration,draft=JSON.stringify(wiz.m);
+  const trigger=document.getElementById('cfg-sample-trigger');
+  const status=document.getElementById('cfg-sample-status');
+  const open=()=>trigger.isConnected&&S.wiz===wiz&&S.modal===modal&&!modal.closing;
+  const current=()=>open()&&wizardGeneration===generation&&JSON.stringify(wiz.m)===draft;
+  document.getElementById('cfg-sample-panel').hidePopover();
+  trigger.disabled=true;
+  status.textContent='Reading sample configuration…';
+  try{
+    const response=await athenaFetch('/api/sample?set='+set);
+    if(!response.ok)throw Error('The sample configuration is unavailable.');
+    const model=sampleConfigurationModel((await response.json()).setup);
+    if(!current())return;
+    const validation=await api('/api/configuration/validate',modelToPayload(model));
+    if(!current())return;
+    if(!validation.body?.ok)throw Error('The sample configuration could not be validated.');
+    wizardGeneration++;
+    stageOther=false;
+    Object.assign(wiz,{m:model,errors:{},attempted:{},result:null,compat:null,changes:[]});
+    wizRender();
+    document.getElementById('cfg-sample-status').textContent=(set==='happy'?'Happy':'Stress')+' configuration loaded. Review it before saving.';
+    document.getElementById('cfg-sample-trigger').focus({preventScroll:true});
+  }catch(error){
+    if(current())status.textContent=error.message||'The sample configuration could not be loaded.';
+  }finally{
+    if(open()){
+      trigger.disabled=false;
+      if(status.textContent==='Reading sample configuration…')status.textContent='';
+      if(document.activeElement===document.body)trigger.focus({preventScroll:true});
+    }
+  }
+}
 async function injectSample(){
   var T=S.sample={busy:true,step:'Reading the sample setup…'},say=function(t){T.step=t;if(S.modal&&S.modal.tab==='sample')render();};
   try{
     var set=S.sampleSet==='stress'?'stress':'happy',r=await athenaFetch('/api/sample?set='+set);if(!r.ok)throw Error('The sample setup could not be read.');
     var plan=await r.json(),setup=plan.setup,names=[setup.primary.file].concat(Object.values(setup.optional)),miss=names.filter(function(n){return plan.available.indexOf(n)<0;});
     if(miss.length)throw Error('These sample files were not found: '+miss.join(', ')+'. Check the sample folder.');
-    var get=async function(n){var x=await athenaFetch('/api/sample/file/'+encodeURIComponent(n)+'?set='+set);if(!x.ok)throw Error('Could not read '+n+'.');return new File([await x.blob()],n,{type:'text/csv'});};
     say('Starting a fresh session…');await endSession();S.sample=T;S.modal={tab:'sample',from:null};
     say('Setting up the account…');
-    var A=setup.account,m=blankModel();m.acc={id:A.id,tz:A.timezone,covFrom:A.coverage_start||'',covLast:A.coverage_last||''};m.profile=wJ(setup.profile);openWizard(m,4);S.modal={tab:'sample',from:null};
+    openWizard(sampleConfigurationModel(setup),4);S.modal={tab:'sample',from:null};
     var v=await wizValidate();if(!(v&&v.ok))throw Error(Object.values(S.wiz.errors||{})[0]||'The sample account was not accepted.');
     wizUse();S.modal={tab:'sample',from:null};if(!S.bq)S.bq=S.cfg.business_questions[0].id;
     say('Loading '+setup.primary.module+' (the largest file, this can take a few seconds)…');S.grain=setup.primary.grain;
-    await upload(await get(setup.primary.file));S.modal={tab:'sample',from:null};
+    await upload(await sampleCsv(set,setup.primary.file));S.modal={tab:'sample',from:null};
     if(!(S.upload&&S.upload.ok))throw Error('The primary sample file was not accepted.'+(S.failed?' '+S.failed:''));
     var ids=Object.keys(setup.optional);
-    for(var i=0;i<ids.length;i++){say('Loading '+ids[i]+'…');await uploadOptional(ids[i],await get(setup.optional[ids[i]]));S.modal={tab:'sample',from:null};
+    for(var i=0;i<ids.length;i++){say('Loading '+ids[i]+'…');await uploadOptional(ids[i],await sampleCsv(set,setup.optional[ids[i]]));S.modal={tab:'sample',from:null};
       var slot=optionalSlot(ids[i]);if(!(slot&&slot.upload&&slot.upload.ok))throw Error(ids[i]+' was not accepted.'+(slot&&slot.error?' '+slot.error:''));}
     say('Choosing the analysis scope…');
     var qs=function(id){return ((S.plan&&S.plan.questions)||[]).find(function(q){return q.id===id;});};
@@ -6261,7 +6496,7 @@ function gModal(){
   return {
     className:'g-settings-modal'+(settings?' g-settings-workflow':'')+(dsv?' g-dataset-modal':'')+(loaded?' g-loaded-modal':'')+(tab==='datasum'?' g-sum-modal':'')+(form?' g-form-modal':'')+(exporting?' g-export-modal':'')+(fileOptions?' g-file-modal':''),
     description:exporting?'g-export-availability':null,
-    html:rail+'<div class="g-modal-body-wrap">'+(dsv?dsHeader(dsv):'<div class="g-modal-header-bar">' +'<h3 id="g-modal-h" tabindex="-1">'+esc(G_TITLES[tab])+'</h3><button class="g-modal-close-icon" id="g-modal-close" type="button" aria-label="'+(loaded||exporting?'Close':tab==='datasum'?'Close data summary':dataset?'Close dataset details':'Close settings')+'">×</button></div>')+(form?'<nav class="profile-jumpbar" aria-label="Configuration sections">'+[['profile-account','1. Account & coverage'],['profile-business','2. Business & schedule'],['profile-delivery','3. Delivery & support']].map(v=>'<button type="button" data-profile-jump="'+v[0]+'">'+v[1]+'</button>').join('')+'</nav>':'')+'<div class="g-modal-scroll-pane">'+body+'</div>'+(dsv?dsFooter(dsv):'')+(form?'<div class="profile-actions"><button type="button" class="btn secondary" id="w-cancel">Close without applying</button><button type="button" class="btn" id="w-close">Save and close</button></div>':'')+'</div>'
+    html:rail+'<div class="g-modal-body-wrap">'+(dsv?dsHeader(dsv):'<div class="g-modal-header-bar">' +'<h3 id="g-modal-h" tabindex="-1">'+esc(G_TITLES[tab])+'</h3><button class="g-modal-close-icon" id="g-modal-close" type="button" aria-label="'+(loaded||exporting?'Close':tab==='datasum'?'Close data summary':dataset?'Close dataset details':'Close settings')+'">×</button></div>')+(form?'<nav class="profile-jumpbar" aria-label="Configuration sections">'+[['profile-account','1. Account & coverage'],['profile-business','2. Business & schedule'],['profile-delivery','3. Delivery & support']].map(v=>'<button type="button" data-profile-jump="'+v[0]+'">'+v[1]+'</button>').join('')+'</nav>':'')+'<div class="g-modal-scroll-pane">'+body+'</div>'+(dsv?dsFooter(dsv):'')+(form?'<div class="profile-actions"><button type="button" class="btn secondary" id="w-cancel">Close without applying</button><span id="cfg-sample-status" role="status"></span><div class="profile-save-actions">'+samplePicker('cfg')+'<button type="button" class="btn" id="w-close">Save and close</button></div></div>':'')+'</div>'
   };
 }
 function datasetLoadedDialog(){var u=S.upload&&S.upload.ok?S.upload:null;if(!u)return '<p>This dataset is no longer loaded.</p>';
@@ -6381,7 +6616,7 @@ document.addEventListener("click",function(e){
     gSetGuide(guide,open,true);return;
   }
   if(t.dataset.chartExplore||t.dataset.chartExpand){openChartDialog(t);return;}
-  if(id==="g-trend-cancel"||t.hasAttribute("data-close-daily-explore")){closeChartFilter(true);return;}
+  if(id==="g-trend-cancel"){closeChartFilter(true);return;}
   if(t.dataset.chapter&&S.modal?.chartMode==="focus"){
     var expandedFrom=S.modal.from;
     closeChartDialog();
@@ -6391,6 +6626,8 @@ document.addEventListener("click",function(e){
   if(id==="g-export-presentation"){gOpenSettings("export",t);return;}
   if(id==="g-full-detail"){if(canLeaveSettingsForFullInsights())gDismissSettings(()=>go("full-insights"));return;}
   if(id==="s-datasum"){gOpenSettings("datasum");return;}
+  if(t.dataset.configSample){loadSampleConfiguration(t.dataset.configSample);return;}
+  if(t.dataset.datasetSample){uploadDatasetSample(t.dataset.datasetSample);return;}
   if(id==="sample-run"){if(S.sample&&S.sample.busy)return;if(S.config||S.upload){S.sample={confirm:true};render();}else injectSample();return;}
   if(id==="sample-go"){if(!(S.sample&&S.sample.busy))injectSample();return;}
   if(id==="sample-cancel"){S.sample=null;render();return;}
@@ -6433,7 +6670,10 @@ document.addEventListener("click",function(e){
 });
 document.addEventListener("keydown",function(e){
   var pop=document.getElementById("w-tzpop");
-  if(e.key==="Escape"){if(e.defaultPrevented||(pop&&!pop.hidden))return;if(S.modal){e.preventDefault();gCloseSettings();return;}if(!drawer.hidden)xCloseDrawer();return;}
+  if(e.key==="Escape"){if(e.defaultPrevented||(pop&&!pop.hidden))return;
+    const samplePanel=document.querySelector('.ds-sample-panel:popover-open');
+    if(samplePanel){e.preventDefault();samplePanel.hidePopover();document.querySelector('[popovertarget="'+samplePanel.id+'"]').focus({preventScroll:true});return;}
+    if(S.modal){e.preventDefault();gCloseSettings();return;}if(!drawer.hidden)xCloseDrawer();return;}
   if(e.key==="Tab"&&S.modal){
     var d=document.getElementById("g-dialog");if(!d)return;
     var f=[].slice.call(d.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')).filter(function(x){return x.checkVisibility?x.checkVisibility():x.getClientRects().length>0;});

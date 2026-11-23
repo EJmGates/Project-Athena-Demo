@@ -1,6 +1,8 @@
 
 "use strict";
 
+const athenaWorkerUrl = new URL("./athena-worker.js", document.baseURI);
+athenaWorkerUrl.search = new URL(document.currentScript.src).search;
 let athenaPort;
 let athenaRequestNumber = 0;
 const athenaPending = new Map();
@@ -14,12 +16,12 @@ function athenaBrowserPort() {
       const key = "athena-pages-session";
       const session = sessionStorage.getItem(key) || crypto.randomUUID();
       sessionStorage.setItem(key, session);
-      worker = new SharedWorker("./athena-worker.js", { ...options, name: session, extendedLifetime: true });
+      worker = new SharedWorker(athenaWorkerUrl, { ...options, name: session + athenaWorkerUrl.search, extendedLifetime: true });
     } catch {
       // Dedicated workers also support a full analysis during the current page load.
     }
   }
-  worker ??= new Worker("./athena-worker.js", options);
+  worker ??= new Worker(athenaWorkerUrl, options);
   athenaPort = worker.port || worker;
   athenaPort.addEventListener("message", ({ data }) => {
     const request = athenaPending.get(data.id);
