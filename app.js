@@ -11,15 +11,13 @@ function busyLabel(message){return '<span class="analysis-spinner" aria-hidden="
 function n0(x){return Math.round(x).toLocaleString("en-US");}
 function n1(x){return (Math.round(x*10)/10).toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1});}
 function pct(x){return (Math.round(x*1000)/10).toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1})+"%";}
-function api(){
-  return Promise.resolve({status:405,body:{message:"The public demo uses a fixed synthetic report."}});
-}
+function api(path,body,opts){opts=opts||{};busy(1);var p=athenaFetch(path,{method:body===undefined?"GET":"POST",headers:opts.headers||{"Content-Type":"application/json"},body:body===undefined?undefined:(opts.raw?body:JSON.stringify(body))}).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});});var d=function(){setTimeout(function(){busy(-1);},0);};p.then(d,d);return p;}
 // Uploads are short-lived server-side handles, not saved analysis data. A
 // generation lets the browser ignore and release a late inspection response
 // after the operator starts over or selects a different file.
 function releaseUpload(uploadId){
   if(!uploadId)return;
-  fetch("/api/end-session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({upload_id:uploadId}),keepalive:true}).catch(function(){});
+  athenaFetch("/api/end-session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({upload_id:uploadId}),keepalive:true}).catch(function(){});
 }
 function abandonUpload(){
   uploadGeneration++;
@@ -1548,7 +1546,7 @@ function optionalSlot(id){if(!optionalDefinition(id))return null;return S.option
 function optionalReferences(){var refs={};Object.keys(S.optionalUploads).forEach(id=>{var slot=S.optionalUploads[id],u=slot.upload;if(u&&u.upload_id&&u.restore_token)refs[id]={id:u.upload_id,token:u.restore_token};else if(slot.retired)refs[id]={id:slot.retired.id,token:slot.retired.token,retired:true};});return refs;}
 function validOptionalOwner(o){return keysOnly(o,['owner_id','owner_token'])&&typeof o.owner_id==='string'&&/^[0-9a-f]{16}$/.test(o.owner_id)&&typeof o.owner_token==='string'&&/^[A-Za-z0-9_-]{32}$/.test(o.owner_token);}
 function validOptionalDraft(d){if(!(d.optionalOwner===null||validOptionalOwner(d.optionalOwner))||!plainObject(d.optionals)||Object.keys(d.optionals).length>7)return false;return Object.keys(d.optionals).every(id=>{var r=d.optionals[id];return !!optionalDefinition(id)&&d.optionalOwner!==null&&keysOnly(r,['id','token','retired'])&&typeof r.id==='string'&&/^[0-9a-f]{16}$/.test(r.id)&&typeof r.token==='string'&&/^[A-Za-z0-9_-]{32}$/.test(r.token)&&(!('retired'in r)||typeof r.retired==='boolean');});}
-function optionalCleanup(owner,refs,close){if(!owner)return Promise.resolve(true);return fetch('/api/end-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uploads:Object.values(refs||{}).map(r=>({id:r.id,token:r.token})),optional_owner:owner,close_optional_owner:!!close}),keepalive:true}).then(r=>r.status===200||r.status===404).catch(()=>false);}
+function optionalCleanup(owner,refs,close){if(!owner)return Promise.resolve(true);return athenaFetch('/api/end-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uploads:Object.values(refs||{}).map(r=>({id:r.id,token:r.token})),optional_owner:owner,close_optional_owner:!!close}),keepalive:true}).then(r=>r.status===200||r.status===404).catch(()=>false);}
 function clearOptionalInputs(){var owner=S.optionalOwner,refs=optionalReferences();optionalEpoch++;Object.values(S.optionalUploads).forEach(slot=>{slot.generation++;slot.busy=false;});S.optionalUploads={};S.optionalOwner=null;S.optionalOwnerPending=null;optionalCleanup(owner,refs,true);}
 function ensureOptionalOwner(){if(S.optionalOwner)return Promise.resolve(S.optionalOwner);if(S.optionalOwnerPending)return S.optionalOwnerPending;var epoch=optionalEpoch,promise=api('/api/upload/session',{}).then(r=>{if(r.status!==200||!validOptionalOwner(r.body))throw Error((r.body&&r.body.message)||'The optional-file session could not be opened. Try again.');if(epoch!==optionalEpoch){optionalCleanup(r.body,{},true);throw Error('This session has ended.');}S.optionalOwner=r.body;return r.body;});S.optionalOwnerPending=promise;promise.then(()=>{if(S.optionalOwnerPending===promise)S.optionalOwnerPending=null;},()=>{if(S.optionalOwnerPending===promise)S.optionalOwnerPending=null;});return promise;}
 function expireOptionalOwner(owner){if(!S.optionalOwner||S.optionalOwner.owner_id!==owner.owner_id)return;S.optionalOwner=null;Object.values(S.optionalUploads).forEach(slot=>{slot.upload=null;slot.retired=null;if(!slot.busy)slot.error='That file is no longer available. Upload it again.';});}
@@ -2596,7 +2594,7 @@ function openChartFilter(trigger,key,chart,result){
   panel.setAttribute("aria-label","Explore your data");
   chartFilter={chart,key,result,draft,panel,trigger};
   var scope=chartAppliedScope(chart,result);
-  if(chart.fields&&!chart.request){
+  if(chart.fields){
     var preview=chart.preview(result,draft);
     var heading=daily
       ?'<div class="g-daily-explore-heading"><h4>Explore your data</h4><button type="button" class="btn secondary" data-close-daily-explore>Close</button></div>':'';
@@ -2605,12 +2603,11 @@ function openChartFilter(trigger,key,chart,result){
     +'<div id="g-trend-preview-detail">'+(preview.html||'')+'</div></aside>'
     +'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Cancel</button>'
       +'<button type="submit" class="btn" id="g-trend-apply"'+(preview.valid?'':' disabled')+'>Apply</button></div></form>';
-   }else panel.innerHTML=scope+(chart.request?'<p class="demo-note">This demo uses a fixed sample scope.</p>':'')
-    +'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Close</button></div>';
+  }else panel.innerHTML=scope+'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Close</button></div>';
   trigger.after(panel);
   trigger.setAttribute("aria-expanded","true");
   panel.showPopover();
-  if(!chart.request)chart.sync?.(chartFilter);
+  chart.sync?.(chartFilter);
   positionChartPopover(panel,trigger);
   (panel.querySelector("input:not(:disabled),select:not(:disabled)")||panel.querySelector("button")).focus({preventScroll:true});
 }
@@ -5959,7 +5956,7 @@ function gInsights(){
   S.xblocks=[];var R=xR();if(!R)return '<h1>Insights</h1>';
   var full=S.page==="full-insights";
   var tools='<div class="g-report-utilities">'+(full?'<button type="button" class="g-linkbtn" id="g-back-insights" data-go="insights">← Back to Insights</button>':'')
-    +'</div>';
+    +'<button type="button" class="btn secondary g-export-launcher" id="g-export-presentation" aria-haspopup="dialog">Export presentation</button></div>';
   if(R.value===null)return '<div class="g-insights-viewport-container">'+tools+withR(R,pageInsights)+'</div>';
   var views=gReportViews(R);
   var scoring=R.metric?.scoring;
@@ -6210,10 +6207,10 @@ function gSampleTab(){var T=S.sample||{};
 async function injectSample(){
   var T=S.sample={busy:true,step:'Reading the sample setup…'},say=function(t){T.step=t;if(S.modal&&S.modal.tab==='sample')render();};
   try{
-    var set=S.sampleSet==='stress'?'stress':'happy',r=await fetch('/api/sample?set='+set);if(!r.ok)throw Error('The sample setup could not be read.');
+    var set=S.sampleSet==='stress'?'stress':'happy',r=await athenaFetch('/api/sample?set='+set);if(!r.ok)throw Error('The sample setup could not be read.');
     var plan=await r.json(),setup=plan.setup,names=[setup.primary.file].concat(Object.values(setup.optional)),miss=names.filter(function(n){return plan.available.indexOf(n)<0;});
     if(miss.length)throw Error('These sample files were not found: '+miss.join(', ')+'. Check the sample folder.');
-    var get=async function(n){var x=await fetch('/api/sample/file/'+encodeURIComponent(n)+'?set='+set);if(!x.ok)throw Error('Could not read '+n+'.');return new File([await x.blob()],n,{type:'text/csv'});};
+    var get=async function(n){var x=await athenaFetch('/api/sample/file/'+encodeURIComponent(n)+'?set='+set);if(!x.ok)throw Error('Could not read '+n+'.');return new File([await x.blob()],n,{type:'text/csv'});};
     say('Starting a fresh session…');await endSession();S.sample=T;S.modal={tab:'sample',from:null};
     say('Setting up the account…');
     var A=setup.account,m=blankModel();m.acc={id:A.id,tz:A.timezone,covFrom:A.coverage_start||'',covLast:A.coverage_last||''};m.profile=wJ(setup.profile);openWizard(m,4);S.modal={tab:'sample',from:null};
@@ -6642,42 +6639,23 @@ document.addEventListener("change",function(e){
 document.addEventListener("dragover",function(e){var d=e.target.closest("#drop,#optional-drop");if(d){e.preventDefault();d.classList.add("over-drop");}});
 document.addEventListener("dragleave",function(e){var d=e.target.closest("#drop,#optional-drop");if(d)d.classList.remove("over-drop");});
 document.addEventListener("drop",function(e){var d=e.target.closest("#drop,#optional-drop");if(d){e.preventDefault();d.classList.remove("over-drop");if(e.dataTransfer.files[0]){if(d.id==='optional-drop')uploadOptional(S.optionalEditing,e.dataTransfer.files[0]);else upload(e.dataTransfer.files[0]);}}});
-// Public Pages entry point. The existing report renderer consumes one completed synthetic run.
-const originalRenderSide = renderSide;
-renderSide = function(){
-  originalRenderSide();
-  for(const id of ["s-home","s-data","s-cockpit","s-settings"]){
-    document.getElementById(id)?.closest("li")?.remove();
+api("/api/config").then(function(r){
+  if(r.status!==200)throw Error("Configuration unavailable");
+  S.cfg=r.body;
+  S.shell=S.cfg.shell==="sidebar"?"sidebar":"classic";
+  document.body.className="shell-"+S.shell;
+  if(S.shell==="sidebar"){
+    S.page="home";
+    try{
+      var sampleChoice=sessionStorage.getItem(SAMPLE_CHOICE_KEY);
+      if(sampleChoice==="happy"||sampleChoice==="stress")S.sampleSet=sampleChoice;
+      if([DRAFT_KEY,WKEY,NEW_WKEY,STAGED_CONFIG_KEY,"athena.configuration"].some(key=>sessionStorage.getItem(key))){
+        document.getElementById("g-startup-status").innerHTML=busyLabel("Restoring your session\u2026");
+      }
+    }catch(e){}
   }
-  const mode = S.page === "full-insights" ? "full-insights" : "insights";
-  const switcher = document.createElement("div");
-  switcher.className = "demo-modes";
-  switcher.setAttribute("role","group");
-  switcher.setAttribute("aria-label","Detail level");
-  for(const [destination,label] of [["insights","Standard"],["full-insights","Full detail"]]){
-    const button = document.createElement("button");
-    button.className = "g-nav-btn";
-    button.type = "button";
-    button.dataset.go = destination;
-    button.setAttribute("aria-pressed",String(mode === destination));
-    button.textContent = label;
-    switcher.append(button);
-  }
-  const footer = document.querySelector(".g-sidebar-footer");
-  document.querySelector("#side>nav").before(switcher);
-  footer.innerHTML = '<p class="demo-scope">Synthetic sample<br>Fixed report scope</p>';
-};
-const originalRenderTop = renderTop;
-renderTop = function(){
-  originalRenderTop();
-  const status = document.querySelector("#g-status span:last-child");
-  if(status)status.textContent = "Synthetic demo";
-};
-const demo = JSON.parse(document.getElementById("demo-result").textContent);
-S.cfg = demo.config;
-S.result = demo.result;
-S.optionalUploads.D08 = {upload:{ok:true,upload_id:"synthetic-d08"}};
-S.shell = "sidebar";
-S.page = "insights";
-document.body.className = "shell-sidebar";
-render();
+  return restoreConfig();
+}).then(restoreStagedConfig).then(restoreDraft).then(restoreWiz).then(render).catch(function(){
+  main.innerHTML='<div class="g-startup-status"><p role="alert">Athena could not open your session.</p><button type="button" class="btn secondary" id="g-retry-startup">Try again</button></div>';
+  document.getElementById("g-retry-startup").addEventListener("click",()=>location.reload());
+});

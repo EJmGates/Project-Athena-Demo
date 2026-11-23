@@ -1,11 +1,7 @@
-# Project Athena Insights demo
+# Project Athena
 
-An interactive, static GitHub Pages demo of the 23 November 2026 Athena build.
-The current renderer displays a completed average handle time report calculated
-from the synthetic Happy dataset, 7 July through 28 September 2025. Open the
-site to explore Standard and Full detail, chart views, Focus mode and Evidence.
-GitHub Pages serves the sample report. Upload and server-side recalculation
-require the separately hosted Athena application.
+This GitHub Pages build runs the Athena review app in a browser. Start a new analysis, add a CSV or load a synthetic sample under Settings, then run it from the Analysis Cockpit.
 
-Explore and Threshold Guides stay in anchored, non-modal popups beside their
-triggers. They leave the surrounding report or Focus view undimmed.
+The site uses the Athena 23 November 2026 snapshot and Pyodide 314.0.8. The browser serves the same Python request handlers through an in-memory worker. The browser runtime uses scikit-learn 1.8.0. Desktop Chrome is the verified browser. Browsers that use the dedicated worker fallback may require uploading the file again after a refresh.
+
+Explore and Threshold Guides open beside their own buttons in anchored, non-modal popups without dimming the surrounding view, including in Focus.
