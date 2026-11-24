@@ -35,20 +35,35 @@ function planBody(){
   var b={answers:S.answers,upload_id:S.upload&&S.upload.ok?S.upload.upload_id:null,configuration:S.config};
   if(S.analysisSetup&&S.analysisSetup.metric_id&&S.analysisSetup.metric_id!=='aht'){
     var setup=S.analysisSetup;
-    if(metricScoreFormat(setup.metric_id)==='fraction'&&(!setup.scoring||setup.scoring.scoring_type!=='percent')){
-      // Values entered in points cannot be carried over as percentage requirements.
-      S.analysisSetup=setup={metric_id:setup.metric_id,direction:setup.direction,scoring:{scoring_type:'percent'}};
-    }
-    setup.unit=metricUnitOf(setup.metric_id,setup.scoring);
-  }      /* the unit follows the scoring, so an older saved draft cannot carry a stale one */
-  if(S.shell==="sidebar"){b.journey="cycle1";b.display_unit=S.displayUnit;if(S.analysisMapping)b.analysis_mapping=S.analysisMapping;else if(S.analysisSetup&&(S.analysisSetup.metric_id==='aht'||scoringValid(S.analysisSetup.scoring)))b.analysis_setup=S.analysisSetup;}
+    var modes=scoringModes(setup.metric_id);
+    if(modes.length&&!modes.includes(setup.scoring?.scoring_type))changeScoredUnit(setup,modes[0]);
+    else setup.unit=metricUnitOf(setup.metric_id,setup.scoring);
+  }
+  if(S.shell==="sidebar"){b.journey="cycle1";b.display_unit=S.displayUnit;if(S.analysisMapping)b.analysis_mapping=S.analysisMapping;else if(S.analysisSetup&&setupPeriodsComplete(S.analysisSetup)&&(S.analysisSetup.metric_id==='aht'||scoringValid(S.analysisSetup.scoring)))b.analysis_setup=S.analysisSetup;}
   return b;
+}
+var cockpitFieldEdits=new WeakSet();
+document.addEventListener('input',function(e){
+  if(e.target.matches('#cockpit-form input:is([data-setup-field],[data-scoring],[data-num],[data-date])'))cockpitFieldEdits.add(e.target);
+});
+document.addEventListener('change',function(e){cockpitFieldEdits.delete(e.target);});
+document.addEventListener('focusout',function(e){cockpitFieldEdits.delete(e.target);});
+function renderPlan(generation){
+  if(generation!==planGeneration)return;
+  var field=document.activeElement;
+  if(cockpitFieldEdits.has(field)){
+    // Keep the live control while it holds an uncommitted edit, including partial native date and number input.
+    saveDraft();
+    field.addEventListener('blur',function(){requestAnimationFrame(function(){renderPlan(generation);});},{once:true});
+    return;
+  }
+  render();
 }
 function replan(){
   var generation=++planGeneration;
   return api("/api/plan",planBody()).then(function(r){
     if(generation!==planGeneration)return S.plan;
-    if(r.status!==200){S.mappingIssues=(r.body&&r.body.message)||"Review your analysis setup.";S.confirmed=false;render();return S.plan;}
+    if(r.status!==200){S.mappingIssues=(r.body&&r.body.message)||"Review your analysis setup.";S.confirmed=false;renderPlan(generation);return S.plan;}
     S.mappingIssues=null;S.plan=r.body;
     // The plan returns only complete, validated answers.  Keep an in-progress
     // number-with-unit or date-range entry in the browser until its companion
@@ -57,7 +72,7 @@ function replan(){
     Object.keys(S.answers).forEach(function(k){if(!shown[k]&&k!=='report_questions')delete S.answers[k];});
     Object.keys(S.plan.answers||{}).forEach(function(k){if(S.answers[k]===undefined)S.answers[k]=S.plan.answers[k];});
     (S.plan.derived||[]).forEach(function(x){if(x&&x.question)S.answers[x.question]=x.value;});
-    render();return S.plan;
+    renderPlan(generation);return S.plan;
   });
 }
 function setAnswer(id,val){
@@ -88,15 +103,15 @@ function qHtml(q){
     if(cockpit)h+='</div>';
   }else if(q.type==="number_with_unit"){
     var v=a?a.value:"",u=a?a.unit:"",src=S.plan.prefilled&&S.plan.prefilled[q.id];
-    h+='<div class="inline"><input type="number" min="0" step="any" aria-label="'+esc(q.prompt)+'" data-num="'+q.id+'" value="'+esc(v)+'">';
+    h+='<div class="inline"><input type="number" min="0" step="any" '+(cockpit?'id="cockpit-value-'+esc(q.id)+'" ':'')+'aria-label="'+esc(q.prompt)+'" data-num="'+q.id+'" value="'+esc(v)+'">';
     q.units.forEach(function(x){h+='<label><input type="radio" name="u-'+q.id+'" data-unit="'+q.id+'" value="'+esc(x.id)+'"'+(u===x.id?" checked":"")+'> '+esc(x.label)+'</label>';});
     h+='</div>'+(src?'<p class="muted" style="margin:8px 0 0">From your saved configuration '+esc(src.profile_id)+' '+esc(src.profile_version)+'. Change it here if this run uses a different target.</p>':'');
     if(q.requires_confirmation)h+='<label class="opt" style="margin-top:10px"><input type="checkbox" data-confirm="'+q.id+'"'+(a&&a.confirmed?" checked":"")+'><span>'+esc(q.confirmation_label)+'</span></label>';
   }else if(q.type==="date_range"){
-    var s=a?a.start:"",e=a?a.end:"",b=q.bounds||{};
+    var s=a?a.start:"",e=a?a.end:"",b=q.bounds||{},dateId='cockpit-date-'+esc(q.id);
     h+=(b.min?'<div class="muted">Your file covers '+esc(b.min)+' to '+esc(b.max)+'.</div>':'')
-      +'<div class="'+(cockpit?'cockpit-dates':'inline')+'"><label>From <input type="date" required aria-required="true" data-date="'+q.id+'" data-end="0" value="'+esc(s)+'" min="'+esc(b.min||"")+'" max="'+esc(b.max||"")+'"></label>'
-      +'<label>Until <input type="date" required aria-required="true" data-date="'+q.id+'" data-end="1" value="'+esc(e)+'" min="'+esc(b.min||"")+'" max="'+esc(b.max||"")+'"></label></div>';
+      +'<div class="'+(cockpit?'cockpit-dates':'inline')+'"><label>From <input type="date" '+(cockpit?'id="'+dateId+'-start" ':'')+'required aria-required="true" data-date="'+q.id+'" data-end="0" value="'+esc(s)+'" min="'+esc(b.min||"")+'" max="'+esc(b.max||"")+'"></label>'
+      +'<label>Until <input type="date" '+(cockpit?'id="'+dateId+'-end" ':'')+'required aria-required="true" data-date="'+q.id+'" data-end="1" value="'+esc(e)+'" min="'+esc(b.min||"")+'" max="'+esc(b.max||"")+'"></label></div>';
   }
   return h+'</fieldset></div>';
 }
@@ -107,8 +122,9 @@ function metricScoreFormat(id){
 function scoringModes(id){
   if(metricScoreFormat(id)==='fraction')return ['percent'];
   var u=S.upload,have=u&&u.summary&&u.summary.extra_columns||[],cols=(metricInfo(id).columns||{})[u&&u.grain]||{};
-  return [['scale',cols.score],['percent',cols.pass_flag||cols.pass_rate_pct]]
-    .filter(function(mode){return have.includes(mode[1]);}).map(function(mode){return mode[0];});
+  var outcomes=u?.summary?.eligible_outcome_columns;
+  return [['percent',cols.pass_flag||cols.pass_rate_pct],['scale',cols.score]]
+    .filter(function(mode){return have.includes(mode[1])&&(mode[0]!=='percent'||!outcomes||outcomes.includes(mode[1]));}).map(function(mode){return mode[0];});
 }
 function metricOptions(){
   return ['aht','csat','qa_score'].filter(function(id){return id==='aht'||scoringModes(id).length;}).map(function(id){return {id:id,label:metricInfo(id).label};});}
@@ -124,26 +140,64 @@ function setMetric(id){var info=metricInfo(id),dir=info.default_direction||'lowe
 /* Constraints analysis card: shown only when the constraints file is loaded. The choices are sent with the analysis and are not kept in the saved draft. */
 function constraintSetup(){S.constraintSetup=S.constraintSetup||{adoption:0.8};return S.constraintSetup;}
 function constraintCard(){var u=S.optionalUploads&&S.optionalUploads.D09&&S.optionalUploads.D09.upload;if(!(u&&u.ok))return '';var c=constraintSetup();
-  return '<label class="field cockpit-effectivity"><span>Expected effectivity of implemented actions (allowance added to avoid expectations of 100% effectivity)</span><select id="cockpit-adoption" data-constraint="adoption">'
-   +[0.5,0.7,0.8].map(function(v){return '<option value="'+v+'"'+(c.adoption===v?' selected':'')+'>'+Math.round(v*100)+'%</option>';}).join('')+'</select></label>';}
+  return '<section class="cockpit-adoption" aria-labelledby="cockpit-adoption-h"><h3 id="cockpit-adoption-h">Action plan adoption rate</h3><label class="field cockpit-effectivity"><span>Expected effectivity of implemented actions (allowance added to avoid expectations of 100% effectivity)</span><select id="cockpit-adoption" data-constraint="adoption">'
+   +[0.5,0.7,0.8].map(function(v){return '<option value="'+v+'"'+(c.adoption===v?' selected':'')+'>'+Math.round(v*100)+'%</option>';}).join('')+'</select></label></section>';}
 document.addEventListener('change',function(e){var t=e.target;if(!t.dataset.constraint||S.analysisBusy||S.updateBusy)return;var c=constraintSetup();
   if(t.dataset.constraint==='adoption')c.adoption=Number(t.value);S.cockpitChosen=true;invalidateResult();render();});
-function metricExtra(id){if(id!==metricId())return '';return id==='aht'?durationUnitChooser():'<div class="cockpit-metric-extra" style="grid-column:1/-1">'+metricCard()+'</div>';}
-function metricCard(){var id=metricId();if(id==='aht')return '';var sc=(S.analysisSetup&&S.analysisSetup.scoring)||{},v=function(k){return sc[k]===undefined?'':sc[k];};
-  var num=function(k,label){return '<label class="field">'+label+requiredLabel()+'<input type="number" step="any" aria-required="true" data-scoring="'+k+'" value="'+esc(v(k))+'"></label>';};
-  return '<div class="cockpit-question"><fieldset><legend>Scoring type'+requiredLabel()+'</legend><div class="cockpit-question-options">'
-   +[['scale','Scale scoring'],['percent','Percent scoring']].filter(function(o){return scoringModes(id).includes(o[0]);}).map(function(o){return '<label class="opt"><input type="radio" name="scoring-type" data-scoring-type="'+o[0]+'"'+(sc.scoring_type===o[0]?' checked':'')+'><span>'+o[1]+'</span></label>';}).join('')+'</div>'
-   +(sc.scoring_type==='scale'?'<div class="cockpit-thresholds">'+num('scale_start','Scale start')+num('scale_end','Scale end')+num('cutoff',id==='csat'?'Cut-off (a score at or above counts as satisfied)':'Cut-off (a score at or above passes)')+'</div>':'')+'</fieldset></div>';}
+function cockpitUnitChooser(id,options,value){
+ return '<label class="field cockpit-unit" for="'+id+'"><span>Unit'+requiredLabel()+'</span><select id="'+id+'" aria-required="true">'
+   +options.map(([key,label])=>'<option value="'+key+'"'+(key===value?' selected':'')+'>'+label+'</option>').join('')+'</select></label>';
+}
+function metricExtra(id){
+ if(id!==metricId())return '';
+ if(id==='aht')return durationUnitChooser();
+ var sc=S.analysisSetup?.scoring||{};
+ var options=[['percent','Percentage'],['scale','Points']].filter(o=>scoringModes(id).includes(o[0]));
+ var num=function(k,label){return '<label class="field"><span>'+label+requiredLabel()+'</span><input type="number" id="cockpit-scoring-'+k+'" step="any" aria-required="true" data-scoring="'+k+'" value="'+esc(sc[k]??'')+'"></label>';};
+ return cockpitUnitChooser('cockpit-score-unit',options,sc.scoring_type)
+  +(sc.scoring_type==='scale'?'<div class="cockpit-thresholds cockpit-scoring-fields">'+num('scale_start','Scale start')+num('scale_end','Scale end')+num('cutoff',id==='csat'?'Satisfied cut-off':'Pass cut-off')+'</div>':'');
+}
+var requirementValues=['target','lower_specification_limit','upper_specification_limit'];
+function changeScoredUnit(setup,mode){
+ [setup,...(setup.periods||[])].forEach(p=>requirementValues.forEach(key=>delete p[key]));
+ setup.scoring=mode==='scale'?scaleDefaults(setup.metric_id):{scoring_type:'percent'};
+ setup.unit=metricUnitOf(setup.metric_id,setup.scoring);
+}
+function setupPeriodsComplete(a){
+ return (a.periods||[]).every(p=>p.effective_start&&requirementValues.some(key=>p[key]!==undefined));
+}
 document.addEventListener('change',function(e){var t=e.target;if(S.updateBusy||!S.analysisSetup)return;
-  if(t.dataset.scoringType){var a=S.analysisSetup,sc=t.dataset.scoringType==='scale'?scaleDefaults(a.metric_id):{scoring_type:'percent'};a.scoring=sc;a.unit=metricUnitOf(a.metric_id,sc);S.cockpitChosen=true;invalidateResult();saveDraft();replan();return;}
+  if(t.id==='cockpit-score-unit'){
+    changeScoredUnit(S.analysisSetup,t.value);
+    S.cockpitChosen=true;invalidateResult();saveDraft();replan();return;
+  }
   if(t.dataset.scoring){var b=S.analysisSetup;b.scoring=b.scoring||{};if(t.value==='')delete b.scoring[t.dataset.scoring];else b.scoring[t.dataset.scoring]=Number(t.value);S.cockpitChosen=true;invalidateResult();saveDraft();replan();}});
 function selectorState(id){S.selectorFilters=S.selectorFilters||{};return S.selectorFilters[id]||(S.selectorFilters[id]={query:'',open:false});}
 function selectorBox(id,label,options,selected,single){
- var filter=selectorState(id),show=options.length>6||filter.open||!!filter.query,utility=function(mode,text){return '<button type="button" class="selector-utility" id="bulk-'+id+'-'+mode+'" data-selector-bulk="'+id+'" data-bulk-mode="'+mode+'">'+text+'</button>';};
- return '<section class="selection-panel"><div class="selection-heading"><h3>'+esc(label)+requiredLabel()+'</h3><div class="selector-tools"><span class="selection-count">'+selected.length+' selected'+(single?'':' of '+options.length)+'.'+(!single&&selected.length===0?' Select at least one group.':'')+'</span>'+(single?'':utility('all','Select all')+utility('none','Clear all'))+(options.length<=6?'<button type="button" class="selector-utility" id="filter-'+id+'" data-selector-filter="'+id+'" aria-controls="filter-box-'+id+'" aria-expanded="'+show+'">Filter</button>':'')+'</div></div><div id="filter-box-'+id+'"'+(show?'':' hidden')+'><label class="selector-filter-label" for="search-'+id+'">Search '+esc(label.toLowerCase())+'</label><div class="selector-search"><span aria-hidden="true">'+gIcon('M21 21l-5-5M18 10a8 8 0 11-16 0 8 8 0 0116 0',18)+'</span><input id="search-'+id+'" type="search" data-selector-search="'+id+'" value="'+esc(filter.query)+'" autocomplete="off"></div></div><div class="selector-box" data-selector-box="'+id+'" role="group" aria-label="'+esc(label)+'">'+options.map(function(o){var checked=selected.includes(o.id),hidden=!o.label.toLowerCase().includes(filter.query.toLowerCase());return (single?'<div class="cockpit-metric-card">':'')+'<button type="button" role="checkbox" class="selector-option" id="choice-'+id+'-'+esc(o.id)+'" data-selector="'+id+'" data-value="'+esc(o.id)+'" aria-checked="'+checked+'" aria-pressed="'+checked+'"'+(hidden?' hidden':'')+'><span class="selection-check" aria-hidden="true">'+(checked?'✓':'')+'</span><span>'+esc(o.label)+'</span></button>'+(single?metricExtra(o.id)+'</div>':'');}).join('')+'<p class="muted selector-empty"'+(options.some(o=>o.label.toLowerCase().includes(filter.query.toLowerCase()))?' hidden':'')+'>No matching options.</p></div></section>';
+ var filter=selectorState(id),match=o=>o.label.toLowerCase().includes(filter.query.toLowerCase());
+ var visible=options.filter(match),radioTab=visible.find(o=>selected.includes(o.id))||visible[0];
+ var show=options.length>6||filter.open||!!filter.query,utility=function(mode,text){return '<button type="button" class="selector-utility" id="bulk-'+id+'-'+mode+'" data-selector-bulk="'+id+'" data-bulk-mode="'+mode+'">'+text+'</button>';};
+ return '<section class="selection-panel"><div class="selection-heading"><h3>'+esc(label)+requiredLabel()+'</h3><div class="selector-tools"><span class="selection-count">'+selected.length+' selected'+(single?'':' of '+options.length)+'.'+(!single&&selected.length===0?' Select at least one group.':'')+'</span>'+(single?'':utility('all','Select all')+utility('none','Clear all'))+(options.length<=6?'<button type="button" class="selector-utility" id="filter-'+id+'" data-selector-filter="'+id+'" aria-controls="filter-box-'+id+'" aria-expanded="'+show+'">Filter</button>':'')+'</div></div><div id="filter-box-'+id+'"'+(show?'':' hidden')+'><label class="selector-filter-label" for="search-'+id+'">Search '+esc(label.toLowerCase())+'</label><div class="selector-search"><span aria-hidden="true">'+gIcon('M21 21l-5-5M18 10a8 8 0 11-16 0 8 8 0 0116 0',18)+'</span><input id="search-'+id+'" type="search" data-selector-search="'+id+'" value="'+esc(filter.query)+'" autocomplete="off"></div></div><div class="selector-box" data-selector-box="'+id+'" role="'+(single?'radiogroup':'group')+'" aria-label="'+esc(label)+'">'+options.map(function(o){var checked=selected.includes(o.id),hidden=!match(o);return (single?'<div class="cockpit-metric-card">':'')+'<button type="button" role="'+(single?'radio':'checkbox')+'" class="selector-option" id="choice-'+id+'-'+esc(o.id)+'" data-selector="'+id+'" data-value="'+esc(o.id)+'" aria-checked="'+checked+'"'+(single?' tabindex="'+(o===radioTab?0:-1)+'"':' aria-pressed="'+checked+'"')+(hidden?' hidden':'')+'><span class="selection-check" aria-hidden="true">'+(!single&&checked?'✓':'')+'</span><span>'+esc(o.label)+'</span></button>'+(single?metricExtra(o.id)+'</div>':'');}).join('')+'<p class="muted selector-empty"'+(options.some(o=>o.label.toLowerCase().includes(filter.query.toLowerCase()))?' hidden':'')+'>No matching options.</p></div></section>';
 }
 function scopeSelector(q){var values=S.answers[q.id]||q.options.map(function(o){return o.id;});return selectorBox(q.id,q.id==='scope_lines_of_business'?'Lines of Business':'Contact drivers',q.options,values,false);}
-document.addEventListener('input',function(e){var id=e.target.dataset.selectorSearch;if(!id)return;if(cockpitDrag?.control.dataset.selectorBox===id)finishCockpitDrag(false);selectorState(id).query=e.target.value;var box=document.querySelector('[data-selector-box="'+id+'"]'),any=false;Array.from(box.querySelectorAll('button')).forEach(function(o){o.hidden=!o.textContent.toLowerCase().includes(e.target.value.toLowerCase());if(!o.hidden)any=true;});box.querySelector('.selector-empty').hidden=any;});
+document.addEventListener('input',function(e){var id=e.target.dataset.selectorSearch;if(!id)return;if(cockpitDrag?.control.dataset.selectorBox===id)finishCockpitDrag(false);selectorState(id).query=e.target.value;var box=document.querySelector('[data-selector-box="'+id+'"]'),any=false;Array.from(box.querySelectorAll('button')).forEach(function(o){o.hidden=!o.textContent.toLowerCase().includes(e.target.value.toLowerCase());if(!o.hidden)any=true;});box.querySelector('.selector-empty').hidden=any;
+ if(box.getAttribute('role')==='radiogroup'){
+   const radios=[...box.querySelectorAll('[role=radio]')];
+   const tabStop=radios.find(r=>!r.hidden&&r.getAttribute('aria-checked')==='true')||radios.find(r=>!r.hidden);
+   radios.forEach(r=>r.tabIndex=r===tabStop?0:-1);
+ }
+});
+document.addEventListener('keydown',function(e){
+ const radio=e.target.closest('[role=radio][data-selector=metric]');
+ const step={ArrowLeft:-1,ArrowUp:-1,ArrowRight:1,ArrowDown:1}[e.key];
+ if(!radio||!step||S.analysisBusy||S.updateBusy)return;
+ const radios=[...radio.closest('[role=radiogroup]').querySelectorAll('[role=radio]:not([hidden])')];
+ if(radios.length<2)return;
+ e.preventDefault();
+ const next=radios[(radios.indexOf(radio)+step+radios.length)%radios.length];
+ next.focus();
+ setMetric(next.dataset.value);
+});
 document.addEventListener('click',function(e){
  var t=e.target.closest('button');if(!t||S.analysisBusy||S.updateBusy)return;
  if(t.dataset.selectorFilter){var id=t.dataset.selectorFilter,state=selectorState(id);state.open=!state.open;if(!state.open&&state.query)state.open=true;render();var el=document.getElementById(state.open?'search-'+id:'filter-'+id);if(el)el.focus({preventScroll:true});return;}
@@ -181,7 +235,8 @@ function ML(){var id=metricId();if(id==='aht')return 'Average handle time';
   var supplied=basis?basis==='supplied_fraction':metricScoreFormat(id)==='fraction';
   if(metricKind()==='percent'&&!supplied)return id==='csat'?'Customer satisfaction rate':'QA pass rate';
   return metricInfo().label;}
-function ml(){return ML().toLowerCase();}
+function metricSentenceCase(label){return label.toLowerCase().replace(/\b(?:aht|qa|csat|fcr)\b/g,word=>word.toUpperCase());}
+function ml(){return metricSentenceCase(ML());}
 function scoringValid(s){if(!s)return false;if(s.scoring_type==='percent')return true;if(s.scoring_type!=='scale')return false;var f=function(x){return typeof x==='number'&&isFinite(x);};return f(s.scale_start)&&f(s.scale_end)&&s.scale_start<s.scale_end&&f(s.cutoff)&&s.cutoff>=s.scale_start&&s.cutoff<=s.scale_end;}
 function durationUnit(){if(metricKind()!=='seconds')return metricKind();return S.displayUnit||'seconds';}
 function durationFactor(unit){if(metricKind()!=='seconds')return 1;return S.cfg.duration_units[unit||durationUnit()];}
@@ -204,7 +259,10 @@ function durationNumber(value,integer){
 }
 function percentNumber(value){return displayNumber(value,1);}
 function editableDuration(value,inputUnit){if(metricKind()!=='seconds')return value;return value*durationFactor(inputUnit||'seconds')/durationFactor();}
-function durationUnitChooser(){if(metricId()!=='aht')return '';return '<label class="field cockpit-unit" for="aht-unit">Unit<select id="aht-unit" aria-required="true" aria-describedby="aht-unit-help">'+Object.keys(S.cfg.duration_units).map(unit=>'<option value="'+unit+'"'+(unit===S.displayUnit?' selected':'')+'>'+unit[0].toUpperCase()+unit.slice(1)+'</option>').join('')+'</select></label><p class="muted cockpit-unit-help" id="aht-unit-help">Controls target entry and report display. Source handling fields remain seconds.</p>';}
+function durationUnitChooser(){
+ return cockpitUnitChooser('aht-unit',Object.keys(S.cfg.duration_units).map(unit=>[unit,unit[0].toUpperCase()+unit.slice(1)]),
+   S.displayUnit);
+}
 function calcText(R){var k=metricKind();
   if(k==='seconds')return "Total handling "+durationUnitName(false)+" divided by handled contacts: "+durationNumber(R.total,true)+" "+durationUnitSymbol()+" ÷ "+n0(R.count)+" contacts = "+durationNumber(R.value,false)+" "+durationUnitSymbol();
   if(k==='percent'){
@@ -511,7 +569,7 @@ function wTz(){
     +'<div class="tzcomb" id="w-tzcomb"><div class="tzrow">'
     +'<input type="text" id="'+id+'" data-w="'+k+'" value="'+esc(v)+'" required aria-required="true" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="w-tzpop" autocomplete="off"'+wBad(k)+wDesc(k,true)+'>'
     +'<button type="button" class="btn secondary tzopen" id="w-tzopen" aria-label="Show all time zones" aria-expanded="false">Show all</button>'
-    +'</div><ul id="w-tzpop" class="tzpop" role="listbox" aria-label="Time zones" hidden></ul></div>'+wErr(k)+'</div>';
+    +'</div><ul id="w-tzpop" class="tzpop" role="listbox" aria-label="Time zones" tabindex="-1" hidden></ul></div>'+wErr(k)+'</div>';
 }
 function wStep1(){return '<h2>Account</h2>'+wText("acc.id","text","Account name","The account label for this analysis.",' autocomplete="off"');}
 function wDirection(m){
@@ -688,13 +746,21 @@ document.addEventListener("focusin",function(e){
   if(!S.wiz||!e.target||e.target.id!=="w-acc-tz")return;
   tzFilter(e.target);
 });
+document.addEventListener("focusout",function(e){
+  var combo=e.target.closest("#w-tzcomb");
+  if(combo&&!combo.contains(e.relatedTarget))tzClose(combo.querySelector("#w-acc-tz"));
+});
 document.addEventListener("input",function(e){
   if(!S.wiz||!e.target||e.target.id!=="w-acc-tz")return;
   tzFilter(e.target);
 });
 document.addEventListener("keydown",function(e){
-  if(!S.wiz||!e.target||e.target.id!=="w-acc-tz")return;
+  if(!S.wiz)return;
   var pop=document.getElementById("w-tzpop");
+  if(e.target.id==="w-tzopen"&&e.key==="Escape"&&pop&&!pop.hidden){
+    e.preventDefault();tzClose(document.getElementById("w-acc-tz"));return;
+  }
+  if(e.target.id!=="w-acc-tz")return;
   if(e.key==="Escape"){if(pop&&!pop.hidden){e.preventDefault();tzRestore(e.target);}}
   else if(e.key==="ArrowDown"){e.preventDefault();if(pop&&pop.hidden)tzFilter(e.target);tzMove(e.target,1);}
   else if(e.key==="ArrowUp"){e.preventDefault();if(pop&&pop.hidden)tzFilter(e.target);tzMove(e.target,-1);}
@@ -715,7 +781,7 @@ document.addEventListener("click",function(e){
 function endSession(){
   // Even an unusable file receives a temporary inspection handle. End Session
   // must clear that handle too, rather than only a file that reached analysis.
-  var endingUploadId=S.upload&&S.upload.upload_id;clearOptionalInputs();S.pendingNew=null;S.selectorFilters={};
+  var endingUploadId=S.upload&&S.upload.upload_id;clearOptionalInputs();S.pendingNew=null;S.selectorFilters={};delete S.cockpitDatasetsOpen;
   uploadGeneration++;invalidateResult();planGeneration++;updateGeneration++;wizardGeneration++;configStageGeneration++;S.cockpit=false;S.modal=null;S.updSnap=null;S.analysisMapping=null;S.analysisSetup=null;S.displayUnit='seconds';S.cockpitChosen=false;S.mappingIssues=null;S.workflowStart=false;
   try{sessionStorage.removeItem("athena.configuration");}catch(e){}
   clearDraft();S.draftNote=null;clearWiz();clearNewWizardDraft();clearStagedConfig();S.wiz=null;
@@ -938,17 +1004,17 @@ function pageData(){
 
 function lineChart(series,target,stepFn){
   var tv=stepFn?series.map(function(p){return stepFn(p.key);}).filter(function(v){return v!==null&&v!==undefined;}):(target===null?[]:[target]);
-  var W=640,H=240,m={l:48,r:14,t:12,b:30},vals=series.map(function(s){return s.value;}).concat(tv);
+  var latest=tv.at(-1),W=640,H=240,m={l:48,r:horizontalTargetGutter(latest),t:12,b:30},vals=series.map(function(s){return s.value;}).concat(tv);
   var lo=Math.min.apply(null,vals)-20,hi=Math.max.apply(null,vals)+20;
   function x(i){return m.l+(W-m.l-m.r)*(series.length===1?.5:i/(series.length-1));}
   function y(v){return m.t+(H-m.t-m.b)*(1-(v-lo)/(hi-lo));}
-  var s='<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+ML()+' by day">';
-  [lo,(lo+hi)/2,hi].forEach(function(v){s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="var(--line)"/><text x="'+(m.l-6)+'" y="'+(y(v)+4)+'" text-anchor="end">'+Math.round(v)+'</text>';});
+  var s='<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(chartMetricAxis())+' by day">';
+  [lo,(lo+hi)/2,hi].forEach(function(v){s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="var(--line)"/><text x="'+(m.l-6)+'" y="'+(y(v)+4)+'" text-anchor="end">'+esc(chartNumber(v))+'</text>';});
   if(stepFn){
-    var segs=[],cur=[],last=null;series.forEach(function(p,i){var v=stepFn(p.key);if(v===null||v===undefined){if(cur.length)segs.push(cur);cur=[];}else{cur.push(x(i)+','+y(v));last=v;}});if(cur.length)segs.push(cur);
+    var segs=[],cur=[],lastIndex;series.forEach(function(p,i){var v=stepFn(p.key);if(v===null||v===undefined){if(cur.length)segs.push(cur);cur=[];}else{cur.push(x(i)+','+y(v));lastIndex=i;}});if(cur.length)segs.push(cur);
     segs.forEach(function(g){s+='<polyline fill="none" stroke="var(--accent)" stroke-dasharray="5 4" points="'+g.join(' ')+'"/>';});
-    if(last!==null)s+='<text x="'+(W-m.r)+'" y="'+(y(last)-5)+'" text-anchor="end">Target '+durationNumber(last,true)+'</text>';
-  }else if(target!==null)s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(target)+'" y2="'+y(target)+'" stroke="var(--accent)" stroke-dasharray="5 4"/><text x="'+(W-m.r)+'" y="'+(y(target)-5)+'" text-anchor="end">Target '+durationNumber(target,true)+'</text>';
+    if(Number.isFinite(latest))s+=horizontalTargetTag(latest,x(lastIndex),y(latest),W-m.r);
+  }else if(Number.isFinite(target))s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(target)+'" y2="'+y(target)+'" stroke="var(--accent)" stroke-dasharray="5 4"/>'+horizontalTargetTag(target,W-m.r,y(target),W-m.r);
   s+='<polyline fill="none" stroke="var(--ink)" stroke-width="2" points="'+series.map(function(p,i){return x(i)+','+y(p.value);}).join(' ')+'"/>';
   series.forEach(function(p,i){s+='<circle cx="'+x(i)+'" cy="'+y(p.value)+'" r="3.5" fill="var(--ink)"><title>'+esc(p.key)+': '+durationNumber(p.value,false)+' '+durationUnitSymbol()+'</title></circle>';if(i%2===0||series.length<6)s+='<text x="'+x(i)+'" y="'+(H-8)+'" text-anchor="middle">'+esc(p.key.slice(5))+'</text>';});
   return s+'</svg>';
@@ -970,9 +1036,9 @@ function barChart(groups,target){
   var W=640,rowH=38,H=groups.length*rowH+14,l=110,hasTarget=Number.isFinite(target);
   var scale=comparisonBarScale(groups.map(function(g){return g.value;}),target);
   function w(v){return (W-l-60)*scale.share(v)/1.1;}
-  var s='<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+ML()+' by group">';
-  groups.forEach(function(g,i){var y=i*rowH+8;s+='<text x="'+(l-8)+'" y="'+(y+19)+'" text-anchor="end">'+esc(g.key)+'</text><rect x="'+l+'" y="'+y+'" width="'+w(g.value)+'" height="26" rx="4" fill="var(--bar)"/><text x="'+(l+w(g.value)+8)+'" y="'+(y+19)+'">'+durationNumber(g.value,false)+' '+durationUnitSymbol()+'</text>';});
-  if(hasTarget&&target>=scale.start)s+='<line x1="'+(l+w(target))+'" x2="'+(l+w(target))+'" y1="0" y2="'+H+'" stroke="var(--accent)" stroke-dasharray="5 4"/>';
+  var s='<svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(chartMetricAxis())+' by group">';
+  groups.forEach(function(g,i){var y=i*rowH+8;s+='<text x="'+(l-8)+'" y="'+(y+19)+'" text-anchor="end">'+esc(g.key)+'</text><rect x="'+l+'" y="'+y+'" width="'+w(g.value)+'" height="26" rx="4" fill="var(--bar)"><title>'+esc(g.key+' · '+fcValue(g.value))+'</title></rect><text x="'+(l+w(g.value)+8)+'" y="'+(y+19)+'">'+esc(chartNumber(g.value))+'</text>';});
+  if(hasTarget&&target>=scale.start)s+='<line x1="'+(l+w(target))+'" x2="'+(l+w(target))+'" y1="0" y2="'+H+'" stroke="var(--accent)" stroke-dasharray="5 4"><title>'+esc('Target '+fcValue(target))+'</title></line>';
   var note=hasTarget&&target<scale.start?' The '+fcValue(target)+' target is below this scale.':'';
   return '<p class="muted">Bars start at '+fcValue(scale.start)+'.'+note+'</p>'+s+'</svg>';
 }
@@ -1200,7 +1266,7 @@ function closeNewDraft(){
   S.newWizDraft=readNewWizardDraft();S.wiz=null;S.wizDraft=old.wizDraft;S.workflowStart=old.workflowStart;S.pendingNew=null;S.modal=null;
   render();(document.getElementById(from)||main).focus({preventScroll:true});
 }
-function commitNew(){if(!S.pendingNew)return;S.pendingNew=null;S.selectorFilters={};clearOptionalInputs();invalidateResult();planGeneration++;updateGeneration++;S.updSnap=null;abandonUpload();S.answers={};S.plan=null;S.analysisMapping=null;S.analysisSetup=null;S.displayUnit='seconds';S.cockpitChosen=false;S.mappingIssues=null;S.bq=S.cfg.business_questions[0].id;clearDraft();}
+function commitNew(){if(!S.pendingNew)return;S.pendingNew=null;delete S.cockpitDatasetsOpen;S.selectorFilters={};clearOptionalInputs();invalidateResult();planGeneration++;updateGeneration++;S.updSnap=null;abandonUpload();S.answers={};S.plan=null;S.analysisMapping=null;S.analysisSetup=null;S.displayUnit='seconds';S.cockpitChosen=false;S.mappingIssues=null;S.bq=S.cfg.business_questions[0].id;clearDraft();}
 function beginModification(page){if(!S.updSnap)S.updSnap={answers:wJ(S.answers||{}),analysisSetup:S.analysisSetup?wJ(S.analysisSetup):null,displayUnit:S.displayUnit,cockpitChosen:!!S.cockpitChosen,analysisMapping:S.analysisMapping?wJ(S.analysisMapping):null,plan:S.plan,result:S.result,confirmed:S.confirmed};S.modal=null;S.cockpit=page==='cockpit';S.page=page==='cockpit'?'home':'data';render();}
 function cancelModification(){var sn=S.updSnap;if(!sn)return;invalidateResult();planGeneration++;updateGeneration++;S.answers=sn.answers;S.analysisSetup=sn.analysisSetup;S.displayUnit=sn.displayUnit||'seconds';S.analysisMapping=sn.analysisMapping;S.cockpitChosen=sn.cockpitChosen;S.plan=sn.plan;S.result=sn.result;S.confirmed=sn.confirmed;S.updSnap=null;S.mappingIssues=null;S.failed=null;go(S.result?'insights':'data');}
 function modificationButton(kind){return '<button type="button" class="g-modify-icon" data-modify="'+kind+'" aria-label="'+(kind==='data'?'Change analyzed datasets':'Change analysis scope')+'" title="'+(kind==='data'?'Change analyzed datasets':'Change analysis scope')+'">'+gIcon('M14.7 6.3a5 5 0 00-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 006.4-6.4l-3 3-3-3z',18)+'</button>';}
@@ -1245,17 +1311,27 @@ function gHome(){
   return h+'</div>';
 }
 function setupFactCells(rows){return rows.filter(v=>v[1]).map(v=>'<dl><dt>'+esc(v[0])+'</dt><dd>'+(v[2]?v[1]:esc(v[1]))+'</dd></dl>').join('');}
-function workspaceReviewHtml(id,title,action,rows,detail){return '<section class="workspace-setup" aria-labelledby="'+id+'"><div class="workspace-setup-heading"><h2 id="'+id+'">'+esc(title)+'</h2>'+action+'</div><div class="workspace-setup-core">'+setupFactCells(rows)+'</div>'+(detail&&detail!=='<dl></dl>'?'<details class="workspace-setup-detail"><summary>Business profile</summary>'+detail+'</details>':'')+'</section>';}
+function accountSetupRows(c){return [['Account name',c.account_id],['Project or analysis title',c.operating_profile?.project_name],['Operating hours time zone',c.business_timezone],['Date format',dateFormatText(c.date_format)]];}
+function workspaceReviewHtml(id,title,action,c,detail=''){return '<section class="workspace-setup" aria-labelledby="'+id+'"><div class="workspace-setup-heading"><h2 id="'+id+'">'+esc(title)+'</h2>'+action+'</div><div class="workspace-setup-core">'+setupFactCells(accountSetupRows(c))+'</div>'+detail+'</section>';}
+function workspaceBusinessProfile(p){
+ var rows=profileDetailRows(p);
+ var groups=[['Business',rows.slice(0,2)],['Markets and channels',rows.slice(2,4)],['Operating schedule',rows.slice(4)]];
+ var detail=groups.filter(g=>g[1].some(row=>row[1])).map(g=>'<section><h3>'+g[0]+'</h3>'+setupFactCells(g[1])+'</section>').join('');
+ return detail?'<details class="workspace-setup-detail"><summary>Business profile</summary><div class="workspace-profile-grid">'+detail+'</div></details>':'';
+}
 function cockpitReviewHtml(){
  var c=S.configSummary||{};
- var datasets=loadedDatasets(),primary=datasets.find(d=>d.primary),optional=datasets.filter(d=>!d.primary);
- var files=(primary?'<strong>'+esc(primary.code+' · '+primary.file)+'</strong>':'')+(optional.length?'<details class="cockpit-loaded-files"><summary>'+optional.length+' optional '+(optional.length===1?'file':'files')+'</summary><ul class="dataset-review-list">'+optional.map(d=>'<li>'+esc(d.code+' · '+d.file)+'</li>').join('')+'</ul></details>':'<div class="muted">No optional files</div>');
- return workspaceReviewHtml('cockpit-review-h','Setup and dataset review','<button type="button" class="selector-utility" id="g-ck-cancel">Edit datasets &rarr;</button>',[['Account name',c.account_id],['Time zone',c.business_timezone],['Date format',dateFormatText(c.date_format)],['Loaded datasets',files,true]]);
+ var files='<details class="cockpit-dataset-disclosure"'+(S.cockpitDatasetsOpen===false?'':' open')+'><summary>Uploaded datasets</summary>'
+  +'<ul class="cockpit-loaded-files" aria-label="Loaded datasets" role="list">'+loadedDatasets().map(d=>'<li'+(d.primary?' class="is-primary"':'')+'>'+esc(d.code+' · '+d.file)+'</li>').join('')+'</ul></details>';
+ return workspaceReviewHtml('cockpit-review-h','Setup and dataset review','<button type="button" class="selector-utility" id="g-ck-cancel">Edit datasets &rarr;</button>',c,files);
 }
+document.addEventListener('toggle',function(e){
+ if(e.target.isConnected&&e.target.matches('.cockpit-dataset-disclosure'))S.cockpitDatasetsOpen=e.target.open;
+},true);
 function cockpitReportQuestions(){
   var selected=new Set(S.answers.report_questions||[]);
   var groups=S.plan.cockpit_report_questions||[];
-  return '<section aria-labelledby="cockpit-report-questions"><div class="cockpit-question-heading"><div><h3 id="cockpit-report-questions">What do you want to find out?</h3><p class="muted">Your performance summary is always included.</p></div>'
+  return '<section aria-labelledby="cockpit-report-questions"><div class="cockpit-question-heading"><div><h3 id="cockpit-report-questions">What do you want to find out?</h3></div>'
     +'<div class="cockpit-question-actions" role="group" aria-label="Question selection"><button type="button" class="selector-utility" id="cockpit-select-questions" aria-label="Select all questions" data-report-bulk="all">Select all</button><button type="button" class="selector-utility" id="cockpit-clear-questions" aria-label="Clear all questions" data-report-bulk="none">Clear all</button></div></div>'
     +'<div class="cockpit-report-groups">'+groups.map((group,index)=>'<div role="group"'+(group.title==='What operational areas should we improve in?'?' class="cockpit-improvement-group"':'')+' aria-labelledby="cockpit-topic-'+index+'"><h4 id="cockpit-topic-'+index+'">'+esc(group.title)+'</h4>'
       +group.options.map(option=>'<label class="opt"><input type="checkbox" data-report-question value="'+esc(option.id)+'"'
@@ -1469,7 +1545,7 @@ window.addEventListener('resize',cockpitGeometry);
 var G_DESC={contact:"One row for every handled contact, with its time and handling seconds. Supports account, Line of Business, agent and day results.",agent_day:"One row for each agent on each working day, with handled contacts and total handling seconds. Supports account, Line of Business and day results."};
 function sourceColumnsHtml(u,expanded){if(!u||!Array.isArray(u.source_columns))return '<p class="muted">Column information is unavailable.</p>';var list=u.source_columns,n=u.source_column_count,show=expanded?list:list.slice(0,4);return '<p class="dataset-columns">Columns: '+show.map(esc).join(', ')+(n>show.length?' <span class="muted">+ '+(n-show.length)+' more</span>':'')+'</p>'+(u.source_columns_truncated?'<p class="muted">Column names are shortened or limited for display.</p>':'');}
 function gData(){var h='<div class="g-workspace-wrap"><div class="g-workspace-header"><h1>Data Workspace</h1></div>';
- if(S.configSummary){var c=S.configSummary,p=c.operating_profile||{},detail=profileSummaryHtml(Object.assign({},p,{project_name:undefined}));h+=workspaceReviewHtml('workspace-setup-h','Setup review','<button type="button" class="selector-utility" id="workspace-edit-setup">Edit setup &rarr;</button>',[['Account name',c.account_id],['Project or analysis title',p.project_name],['Operating hours time zone',c.business_timezone],['Date format',dateFormatText(c.date_format)]],detail);}
+ if(S.configSummary){var c=S.configSummary;h+=workspaceReviewHtml('workspace-setup-h','Setup review','<button type="button" class="selector-utility" id="workspace-edit-setup">Edit setup &rarr;</button>',c,workspaceBusinessProfile(c.operating_profile||{}));}
  h+='<section class="workspace-primary" aria-labelledby="workspace-primary-h"><h2 id="workspace-primary-h">Primary dataset</h2><p class="muted">Choose one of these two layouts.</p>';
  if(S.busy)h+='<p class="notice info" role="status">'+busyLabel('Checking '+(S.uploadingFile||'your file')+'…')+'</p>';
  else if(S.uploadingFile&&(!S.upload||!S.upload.ok)){
@@ -1597,19 +1673,21 @@ document.addEventListener('click',function(e){var t=e.target.closest('button');i
 /* No required value, no analysis. What a direction requires comes from the registry: a target (lower, higher), both limits (within bounds), nothing (monitor only). */
 function targetReady(){
   if(S.analysisMapping)return ((S.configSummary&&S.configSummary.targets)||[]).some(function(t){return t.target!==null&&t.target!==undefined;});
-  var a=S.analysisSetup;if(!a)return false;if(a.metric_id&&a.metric_id!=='aht'&&!scoringValid(a.scoring))return false;var need=dirRequires(a.direction);if(!need.length)return true;
+  var a=S.analysisSetup;if(!a||!setupPeriodsComplete(a))return false;if(a.metric_id&&a.metric_id!=='aht'&&!scoringValid(a.scoring))return false;var need=dirRequires(a.direction);if(!need.length)return true;
   var has=function(v){return need.every(function(k){var x=v[k];return typeof x==='number'&&isFinite(x)&&(k==='target'?x>0:x>=0);});};
   return a.periods&&a.periods.length?a.periods.every(has):has(a);
 }
 function targetMappingHtml(){if(!S.config)return '';if(S.analysisMapping)return legacyMappingHtml();if(!S.analysisSetup&&(S.config.metrics||[]).length){S.analysisMapping=(S.config.metrics||[]).filter(function(m){return m.metric_id==="aht";}).map(wJ);return legacyMappingHtml();}if(!S.analysisSetup)S.analysisSetup={metric_id:'aht',direction:'lower_is_better'};var a=S.analysisSetup;
- var field=function(v,k,label,i,type){return '<label class="field">'+label+((type==='date'&&k==='effective_start')||dirRequires(a.direction).indexOf(k)>=0?requiredLabel():'')+'<input type="'+(type||'number')+'"'+((type==='date'&&k==='effective_start')?' required aria-required="true"':(dirRequires(a.direction).indexOf(k)>=0?' aria-required="true"':''))+' step="any" data-setup-field="'+k+'"'+(i===null?'':' data-period="'+i+'"')+' value="'+esc(v[k]===undefined?'':(k==='effective_end'?dayBefore(v[k]):type==='number'||!type?editableDuration(v[k],a.unit):v[k]))+'"></label>';};
+ var field=function(v,k,label,i,type){return '<label class="field">'+label+((type==='date'&&k==='effective_start')||dirRequires(a.direction).indexOf(k)>=0?requiredLabel():'')+'<input id="cockpit-requirement-'+k+'-'+(i===null?'all':i)+'" type="'+(type||'number')+'"'+((type==='date'&&k==='effective_start')?' required aria-required="true"':(dirRequires(a.direction).indexOf(k)>=0?' aria-required="true"':''))+' step="any" data-setup-field="'+k+'"'+(type!=='date'&&a.metric_id!=='aht'&&k!=='direction'?' data-requirement-unit="'+metricUnitOf(a.metric_id,a.scoring)+'"':'')+(i===null?'':' data-period="'+i+'"')+' value="'+esc(v[k]===undefined?'':(k==='effective_end'?dayBefore(v[k]):type==='number'||!type?editableDuration(v[k],a.unit):v[k]))+'"></label>';};
  var values=function(v,i){return '<div class="cockpit-thresholds">'+(ruleFor(a.direction)?field(v,'target','Target ('+durationUnitName()+')',i):'')+field(v,'lower_specification_limit','Lower specification limit ('+durationUnitName()+')',i)+field(v,'upper_specification_limit','Upper specification limit ('+durationUnitName()+')',i)+'</div>';};
- var h='<div id="analysis-targets"><label class="field cockpit-direction">Direction'+requiredLabel()+'<select aria-required="true" data-setup-field="direction">'+WDIRS.filter(function(d){return metricInfo().directions.indexOf(d[0])>=0;}).map(function(d){return '<option value="'+d[0]+'"'+(a.direction===d[0]?' selected':'')+'>'+d[1]+'</option>';}).join('')+'</select></label>';
+ var h='<div id="analysis-targets"><label class="field cockpit-direction">Direction'+requiredLabel()+'<select id="cockpit-direction" aria-required="true" data-setup-field="direction">'+WDIRS.filter(function(d){return metricInfo().directions.indexOf(d[0])>=0;}).map(function(d){return '<option value="'+d[0]+'"'+(a.direction===d[0]?' selected':'')+'>'+d[1]+'</option>';}).join('')+'</select></label>';
  if(!a.periods||!a.periods.length)h+='<p class="muted">Applies throughout this analysis.</p>'+values(a,null);
  else {h+='<p class="muted">Only these periods have a target or limit comparison. Other dates remain in the observed analysis.</p>';a.periods.forEach(function(p,i){h+='<section class="cockpit-period" aria-labelledby="target-period-'+i+'"><div class="cockpit-period-header"><h3 id="target-period-'+i+'">Target period '+(i+1)+'</h3><button type="button" class="period-remove" data-period-remove="'+i+'" aria-label="Remove target period '+(i+1)+'">Remove period</button></div><div class="cockpit-dates">'+field(p,'effective_start','From',i,'date')+field(p,'effective_end','Until (last included day)',i,'date')+'</div>'+values(p,i)+'</section>';});}
  return h+'<button type="button" class="btn secondary" id="target-period-add">Add target period coverage</button></div>';}
 function legacyMappingHtml(){return '<section class="panel"><h2>Imported target periods</h2>'+targetsTable(S.configSummary.targets||[])+'<p class="muted">Imported dates and scopes are retained.</p><button class="btn secondary" id="target-replace">Edit targets for this analysis</button></section>';}
-document.addEventListener('change',function(e){var t=e.target,k=t.dataset.setupField;if(!k||S.updateBusy)return;var a=S.analysisSetup,v=t.dataset.period===undefined?a:a.periods[+t.dataset.period];if(t.value==='')delete v[k];else if(k==='effective_end'){if(t.value>='9999-12-31'){S.mappingIssues='Until must be before 9999-12-31.';render();return;}v[k]=nextDay(t.value);}else v[k]=t.type==='number'?(metricKind()!=='seconds'?Number(t.value):Number(t.value)*durationFactor()/durationFactor(a.unit||'seconds')):t.value;if(k==='direction'&&!ruleFor(a.direction)){delete a.target;(a.periods||[]).forEach(function(p){delete p.target;});}S.cockpitChosen=true;invalidateResult();replan();});
+ document.addEventListener('change',function(e){var t=e.target,k=t.dataset.setupField;if(!k||S.updateBusy)return;var a=S.analysisSetup;
+ if(t.dataset.requirementUnit&&t.dataset.requirementUnit!==metricUnitOf(a.metric_id,a.scoring))return;
+ var v=t.dataset.period===undefined?a:a.periods[+t.dataset.period];if(t.value==='')delete v[k];else if(k==='effective_end'){if(t.value>='9999-12-31'){S.mappingIssues='Until must be before 9999-12-31.';var generation=++planGeneration;requestAnimationFrame(function(){renderPlan(generation);});return;}v[k]=nextDay(t.value);}else v[k]=t.type==='number'?(metricKind()!=='seconds'?Number(t.value):Number(t.value)*durationFactor()/durationFactor(a.unit||'seconds')):t.value;if(k==='direction'&&!ruleFor(a.direction)){delete a.target;(a.periods||[]).forEach(function(p){delete p.target;});}S.cockpitChosen=true;invalidateResult();replan();});
 document.addEventListener('click',function(e){var t=e.target.closest('button');if(!t||S.updateBusy)return;if(t.id==='target-replace'){S.analysisMapping=null;S.analysisSetup={metric_id:'aht',direction:'lower_is_better'};invalidateResult();replan();}if(t.id==='target-period-add'){var a=S.analysisSetup;a.periods=a.periods||[];a.periods.push({});S.cockpitChosen=true;invalidateResult();replan();}if(t.dataset.periodRemove!==undefined){S.analysisSetup.periods.splice(+t.dataset.periodRemove,1);S.cockpitChosen=true;invalidateResult();replan();}});
 /* ---- Insights ---- */
 function chartMetricAxis(){return ML()+' ('+durationUnitName(true)+')';}
@@ -1659,11 +1737,11 @@ function eventBadge(event,x,left,right,laneEnds){
   return null;
 }
 function runValueGrid(low,high,y,left,right){
-  var step=(high-low)/6;
+  var step=(high-low)/6,tickLabel=chartTickFormatter(durationFactor(),step);
   return Array.from({length:step?7:1},(_,index)=>{
     var value=index===6?high:low+step*index,at=y(value).toFixed(2);
     return '<line class="gc-grid g-run-grid" x1="'+left+'" x2="'+right+'" y1="'+at+'" y2="'+at+'"/>'
-      +'<text class="g-run-tick" x="'+(left-8)+'" y="'+(+at+4)+'" text-anchor="end">'+esc(chartValue(value,step))+'</text>';
+      +'<text class="g-run-tick" x="'+(left-8)+'" y="'+(+at+4)+'" text-anchor="end">'+esc(tickLabel(value))+'</text>';
   }).join('');
 }
 function runDateTick(at,bottom,label,anchor='middle'){
@@ -1680,7 +1758,7 @@ function gLine(R,events=[],period=null){
   if(datedTarget&&days.some(function(d){return datedTarget(d.key)!==t;}))t=null;
   if(days.length===1&&!period)return cueHtml+'<p>One day has an observed value. '+esc(days[0].key)+' · '+durationNumber(days[0].value,false)+' '+durationUnitSymbol()
     +' ('+n0(days[0].count)+' eligible observations).</p>';
-  var W=900,H=events.length?306:270,l=78,r=84,tp=events.length?52:16,b=44,vals=days.map(function(d){return d.value;}).concat(t!==null?[t]:[]);
+ var W=900,H=events.length?306:270,l=78,r=Math.max(84,horizontalTargetGutter(t)),tp=events.length?52:16,b=44,vals=days.map(function(d){return d.value;}).concat(t!==null?[t]:[]);
   var bands=[],assessment=R.target_assessment,firstObserved=days[0].key,lastObserved=days[days.length-1].key;
   if(direction==="within_bounds"&&assessment?.status==="published"){
     assessment.periods.forEach(function(p){
@@ -1717,7 +1795,7 @@ function gLine(R,events=[],period=null){
       +'" height="'+(sy(band.lower)-sy(band.upper))+'" fill="var(--accent-soft)"/>';
   });
   s+=runValueGrid(lo,hi,sy,l,W-r)+'<path class="g-run-axis" d="M'+l+' '+tp+'V'+(H-b)+'H'+(W-r)+'"/>';
-  s+='<text class="gc-unit" transform="translate(14 '+((H-b+tp)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>';
+  s+='<text class="gc-unit" transform="translate(14 '+((H-b+tp)/2)+') rotate(-90)" text-anchor="middle">'+esc(ML())+'</text>';
   var multipleYears=start.slice(0,4)!==end.slice(0,4);
   var maxLabels=Math.max(2,Math.floor((W-l-r)/(multipleYears?120:96))),step=Math.ceil(days.length/maxLabels);
   if(period){
@@ -1734,7 +1812,7 @@ function gLine(R,events=[],period=null){
     s+='<g class="gc-event-marker"><title>'+esc(event.id+' · '+event.date+' · '+event.labels.join(' · '))+'</title>'
       +'<line class="gc-event"'+(eventDays.size>20?' style="opacity:.22"':'')+' x1="'+x+'" x2="'+x+'" y1="'+(badge?badge.bottom:tp)+'" y2="'+(H-b)+'"/><circle class="gc-event-dot" cx="'+x+'" cy="'+tp+'" r="4"/></g>';
   });
-  if(t!==null)s+='<line class="gc-target" x1="'+l+'" x2="'+(W-r)+'" y1="'+sy(t).toFixed(1)+'" y2="'+sy(t).toFixed(1)+'"/><text class="gc-tlabel" x="'+(W-r+6)+'" y="'+(sy(t)+4).toFixed(1)+'">Target '+durationNumber(t,true)+' '+durationUnitSymbol()+'</text>';
+  if(t!==null)s+='<line class="gc-target" x1="'+l+'" x2="'+(W-r)+'" y1="'+sy(t).toFixed(1)+'" y2="'+sy(t).toFixed(1)+'"/>'+horizontalTargetTag(t,W-r,sy(t),W-r);
   var trace=days.map(function(day,index){
     var connects=index>0&&nextDay(days[index-1].key)===day.key;
     return (connects?'L':'M')+sx(day.key).toFixed(1)+' '+sy(day.value).toFixed(1);
@@ -1873,22 +1951,211 @@ function dailyTrendTakeaway(days,details,weekly=''){
     '<h4>Facts</h4><p>'+n0(eligible.length)+' business dates had eligible results.</p>'+(weekly?'<p>'+esc(weekly)+'</p>':'')
     +details);
 }
+const historicalDateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'short',year:'numeric'});
+const historicalDate=date=>historicalDateFormat.format(new Date(date+'T00:00:00Z'));
+const historicalValue=value=>displayNumber(value/durationFactor(),2);
+const historicalReading=value=>historicalValue(value)+(metricKind()==='percent'?'%':' '+durationUnitSymbol());
+const historicalDifference=value=>{
+  const shown=Math.abs(value)/durationFactor();
+  return shown>0&&shown<.005?'< 0.01':historicalValue(Math.abs(value));
+};
+const historicalDelta=value=>historicalDifference(value)+' '+dailyGapUnit();
+const historicalSign=value=>value<0?'−':value>0?'+':'';
+const historicalForms={linear:'Linear',quadratic:'Quadratic',exponential:'Exponential',pearl_reed:'Pearl–Reed S-curve'};
+function historicalFitScore(value){
+  let digits=2;
+  while(digits<16&&Number(value.toFixed(digits))>=.5&&value<.5)digits++;
+  return value.toFixed(digits);
+}
+function historicalFitFinding(R){
+  const analysis=R.historical_daily_trend;
+  const fit=analysis?.status==='fit'?analysis.fit:null;
+  const values=new Map((fit?.values||[]).filter(point=>Number.isFinite(point.value)).map(point=>[point.date,point.value]));
+  const score=values.size&&Number.isFinite(fit.r_squared)?historicalFitScore(fit.r_squared):null;
+  const qualifies=score!==null&&analysis.reporting?.qualifies===true;
+  return {analysis,fit:values.size?fit:null,values,score,qualifies};
+}
+function baselineDailyResult(R){
+  const selected=R.daily_references?.account, refs=dailyReferenceIntervals(selected,R.scope);
+  const days=dailyReadingSeries(R.scope,refs,new Map(R.by_day.map(day=>[day.key,day])));
+  const observed=days.filter(day=>Number.isFinite(day.value));
+  const values=observed.map(day=>day.value), high=Math.max(...values), low=Math.min(...values);
+  const direction=R.analysis_setup?.direction||R.metric?.direction;
+  let previous=null;
+  for(const day of observed){
+    day.change=previous===null?null:day.value-previous;
+    previous=day.value;
+    if(day.value===high&&day.value===low)day.extreme='Highest and lowest observed';
+    else if(day.value===high||day.value===low){
+      day.extreme=day.value===high?'Highest observed':'Lowest observed';
+      if(direction==='lower_is_better'||direction==='higher_is_better')
+        day.tone=(day.value===high)===(direction==='higher_is_better')?'favorable':'unfavorable';
+    }
+  }
+  return {days,observed,refs,direction,markers:[],referenceReason:selected?.reason,trend:historicalFitFinding(R)};
+}
+function baselineDailyDates(R){
+  const state=observedState(R);
+  return {baselineDailyStart:state.baselineDailyStart??R.scope.start,baselineDailyEnd:state.baselineDailyEnd??R.scope.end};
+}
+function baselineDailyDateErrors(R,{baselineDailyStart:start,baselineDailyEnd:end}){
+  const within=date=>date>=R.scope.start&&date<=R.scope.end;
+  return {baselineDailyStart:!within(start),baselineDailyEnd:!within(end)||end<start};
+}
+function baselineDailyFields(R,draft){
+  return [['From','baselineDailyStart'],['Until','baselineDailyEnd']].map(([label,field])=>
+    '<label>'+label+'<input type="date" id="g-'+field+'" value="'+esc(draft[field])+'" min="'+esc(R.scope.start)+'" max="'+esc(R.scope.end)+'" aria-describedby="g-trend-preview" required></label>').join('');
+}
+function baselineDailyPreview(R,draft){
+  if(Object.values(baselineDailyDateErrors(R,draft)).some(Boolean))
+    return {valid:false,text:'Choose From and Until dates in order within the Cockpit period.'};
+  const {baselineDailyStart:start,baselineDailyEnd:end}=draft;
+  const rows=1+Math.round((Date.parse(end)-Date.parse(start))/86400000);
+  return {valid:true,text:'From '+start+' Until '+end+' · '+n0(rows)+(rows===1?' row':' rows')};
+}
+function baselineDailyTable(days,R,trend,evidence=false){
+  const unit=durationUnitSymbol();
+  const showFit=trend.values.size>0&&(evidence||S.page==='full-insights');
+  const labels=['Business date','Actual ('+unit+')','Change from previous reading',...(showFit?['Fitted ('+unit+')']:[]),'Target ('+unit+')',
+    'Gap to target ('+dailyGapUnit()+')','Specification result'];
+  const rows=days.map(day=>{
+    const actual=Number.isFinite(day.value), target=Number.isFinite(day.ref?.target), gap=actual&&target?day.value-day.ref.target:null;
+    const {lower,upper}=day.ref||{};
+    const movement=day.change==null?'—':day.change===0?'No change':(day.change>0?'↑ Up ':'↓ Down ')+historicalDelta(day.change);
+    const verdict=actual&&(Number.isFinite(lower)||Number.isFinite(upper))
+      ?((Number.isFinite(lower)&&day.value<lower)||(Number.isFinite(upper)&&day.value>upper)?'Outside':'Within')+' specification limits':'';
+    let actualText=esc(actual?historicalValue(day.value):'No eligible reading');
+    if(evidence&&actual&&Number.isFinite(day.count))
+      actualText+='<span class="g-historical-reading-basis">'+esc(n0(day.count)+' '+gCountLabel(R).toLowerCase())+'</span>';
+    const fitted=trend.values.get(day.date);
+    const cells=[movement,...(showFit?[Number.isFinite(fitted)?historicalValue(fitted):'—']:[]),target?historicalValue(day.ref.target):'—',
+      gap===null?'—':historicalSign(gap)+historicalDifference(gap),
+      [verdict,day.extreme].filter(Boolean).join(' · ')||'—'];
+    return '<tr'+(day.tone?' data-performance="'+day.tone+'"':'')+'><th scope="row">'+historicalDate(day.date)
+      +'</th><td>'+actualText+'</td>'+cells.map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>';
+  }).join('');
+  return '<div class="scroll g-historical-table" role="region" aria-label="Daily readings" tabindex="0"><table>'
+    +'<colgroup>'+(showFit?[16,15,15,11,11,12,20]:[18,17,15,13,14,23]).map(width=>'<col style="width:'+width+'%">').join('')+'</colgroup>'
+    +'<thead><tr>'+labels.map(label=>'<th scope="col">'+esc(label)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+function historicalTrendStory({days,direction,trend}){
+  const {fit,score,qualifies,values}=trend;
+  if(!fit||score===null)return '';
+  const subject='AHT';
+  const movement=rising=>direction==='lower_is_better'?(rising?'worsened':'improved')
+    :direction==='higher_is_better'?(rising?'improved':'worsened'):rising?'rose':'fell';
+  const {turn,fastest,leveling}=fit.landmarks||{};
+  const fitted=days.filter(day=>values.has(day.date));
+  const delta=values.get(fitted.at(-1)?.date)-values.get(fitted[0]?.date);
+  let story;
+  if(turn){
+    const peak=turn.kind==='peak';
+    story=movement(peak)+' until around '+historicalDate(turn.date)+' and '+movement(!peak)+' afterward';
+  }else if(fastest){
+    const rising=fastest.direction==='rising';
+    story=movement(rising)+' over the period, with the fastest '+(rising?'rise':'drop')+' around '+historicalDate(fastest.date);
+    if(leveling)story+=' and began to level off around '+historicalDate(leveling.date);
+  }else if(delta===0){
+    story='stayed level on the fitted trend';
+  }else{
+    story='generally '+movement(delta>0)+' over the period';
+    if(fit.form==='exponential'&&fitted.length>2){
+      const startStep=Math.abs(values.get(fitted[1].date)-values.get(fitted[0].date));
+      const endStep=Math.abs(values.get(fitted.at(-1).date)-values.get(fitted.at(-2).date));
+      if(historicalValue(startStep)!==historicalValue(endStep))story+=', at '+(endStep>startStep?'a faster':'a slower')+' pace toward the end';
+    }
+  }
+  return (qualifies?subject+' '+story:'The fitted trend suggests '+subject+' '+story)+'.';
+}
+function historicalTrendFacts(trend){
+  const {fit,score}=trend;
+  if(!fit)return [];
+  const strength=Number.isFinite(fit.r_squared)?fit.r_squared>=.5?'Strong':fit.r_squared>=.35?'Moderate':'Weak':null;
+  return ['Trend form · '+historicalForms[fit.form],strength?'Fit strength · '+strength:'',score===null?'R² is unavailable for the fitted trend.':'']
+    .filter(Boolean);
+}
+function historicalLandmarkFacts(fit){
+  const {turn,fastest,leveling}=fit.landmarks||{};
+  const facts=[];
+  if(turn)facts.push('Trend '+turn.kind+' · AHT was '+historicalReading(turn.value)+' around '+historicalDate(turn.date));
+  if(fastest)facts.push('Fastest '+(fastest.direction==='rising'?'rise':'drop')+' · AHT was '+historicalReading(fastest.value)+' around '+historicalDate(fastest.date));
+  if(leveling)facts.push('Began to level off · AHT was '+historicalReading(leveling.value)+' around '+historicalDate(leveling.date));
+  return facts;
+}
 function baselineDailyChart(R){
-  const state=observedState(R), table=state.baselineDailyView==='table';
-  const observed=R.by_day.filter(day=>Number.isFinite(day.value)).length;
-  const takeaway=observed?DAILY_TREND_UNASSESSED:'No eligible daily '+ml()+' readings are available for this period.';
-  const facts='<h4>Facts</h4><ul><li>'+n0(observed)+' business dates had eligible readings.</li>'
+  const state=observedState(R), table=state.baselineDailyView==='table', result=baselineDailyResult(R);
+  const {days,observed,trend}=result, [first,last]=[observed[0],observed.at(-1)];
+  const change=last?.value-first?.value;
+  const takeaway=!first?'No eligible daily '+ml()+' readings are available for this period.'
+    :first===last?'The only eligible daily '+ml()+' reading was '+historicalReading(first.value)+' on '+historicalDate(first.date)+'.'
+    :(first.date===R.scope.start&&last.date===R.scope.end
+      ?'The analysis period started at '+historicalReading(first.value)+' and ended at '+historicalReading(last.value)
+      :'The first eligible reading was '+historicalReading(first.value)+' on '+historicalDate(first.date)
+        +' and the last was '+historicalReading(last.value)+' on '+historicalDate(last.date))
+      +', '+(change===0?'unchanged':historicalDelta(change)+' '+(change>0?'higher':'lower'))+'.';
+  const facts='<h4>Facts</h4><ul>'+historicalTrendFacts(trend).map(fact=>'<li>'+esc(fact)+'</li>').join('')
+    +(trend.score===null?'':'<li>R² · <strong class="g-takeaway-value">'+esc(trend.score)+'</strong></li>')
+    +(trend.fit?historicalLandmarkFacts(trend.fit).map(fact=>'<li>'+esc(fact)+'</li>').join(''):'')
+    +'<li>'+n0(observed.length)+' of '+n0(days.length)+' business dates had eligible readings.</li>'
     +chartPeriodFact(R.scope)+'</ul>';
+  const {baselineDailyStart:start,baselineDailyEnd:end}=baselineDailyDates(R);
   const visual=reportChartControls('baselineDaily',state)
-    +'<h4 class="g-insights-chart-title" id="g-baseline-daily-title">Daily '+esc(chartMetricAxis())+'</h4>'
-    +(table?dailyTrendTable(R):gLine(R,[],R.scope));
-  return '<section id="g-baseline-daily-panel" class="g-chart-container-box" aria-labelledby="g-baseline-daily-title">'
-    +gSlideResult(gSlideTakeaway(takeaway,facts),visual)+'</section>';
+    +'<h4 class="g-insights-chart-title" id="g-baseline-daily-title">Daily '+esc(ml())+'</h4>'
+    +(table?baselineDailyTable(days.filter(day=>day.date>=start&&day.date<=end),R,trend)
+      :'<div class="dt-frame">'+dailyChartLegend(result)+'<div class="dt-plot" data-historical-daily></div>'
+        +(!observed.length?'<p class="dt-empty">'+esc(takeaway)+'</p>':'')+'</div>');
+  return '<section id="g-baseline-daily-panel" class="g-chart-container-box g-daily-aht" aria-labelledby="g-baseline-daily-title">'
+    +gSlideResult(gSlideTakeaway([historicalTrendStory(result),takeaway].filter(Boolean),facts,{title:'Takeaways'}),visual)+'</section>';
 }
 function baselineDailyEvidence(R){
-  return '<h3>Daily performance evidence</h3>'+chartAppliedScope(REPORT_CHART_CONTROLS.baselineDaily,R)
-    +'<p>'+esc(dailyCalculation(R))+'</p>'
-    +dailyTrendTable(R)+'<h4>Daily trend assessment</h4><p>'+DAILY_TREND_UNASSESSED+'</p>';
+  const result=baselineDailyResult(R), {start,end}=R.scope;
+  const lineage=R.evidence?.[0]?.data_lineage;
+  const source=R.metric?.dataset_id||lineage?.dataset_id;
+  const dataset={contact:'D01',agent_day:'D02'}[lineage?.grain];
+  const requirements=result.refs.map(ref=>{
+    const from=ref.start>start?ref.start:start;
+    const until=ref.end&&ref.end<=end?new Date(Date.parse(ref.end)-86400000).toISOString().slice(0,10):end;
+    return '<tr><th scope="row">'+esc(from+' to '+until)+'</th>'
+      +[ref.target,ref.lower,ref.upper].map(value=>'<td>'+esc(Number.isFinite(value)?historicalReading(value):'—')+'</td>').join('')+'</tr>';
+  }).join('');
+  const {analysis,fit,score,qualifies}=result.trend;
+  const candidates=(analysis?.candidates||[]).map(candidate=>
+    '<tr><th scope="row">'+esc(historicalForms[candidate.form])+'</th><td>'+esc(historicalValue(candidate.mae))+'</td><td>'
+      +esc(Number.isFinite(candidate.r_squared)?historicalFitScore(candidate.r_squared):'Unavailable')+'</td><td>'
+      +(candidate.selected?'Selected':'—')+'</td></tr>').join('');
+  const diagnostics=analysis?.diagnostics;
+  const leveling=fit?.landmarks?.leveling;
+  const endTarget=result.days.at(-1)?.ref?.target;
+  const threshold=score===null?'R² is unavailable for the fitted trend.'
+    :'R² '+score+(qualifies?' meets':' is below')+' the descriptive reporting cutoff of 0.50.';
+  const fitEvidence=fit
+    ?'<p>'+esc(historicalForms[fit.form]+' was selected. '+threshold)+'</p>'
+      +'<p>Model comparison uses mean absolute error on the same eligible dates. Only valid candidates are shown. The trend describes this completed period.</p>'
+      +'<p>Prediction and formal significance were not assessed.</p>'
+      +'<div class="scroll g-historical-table" role="region" aria-label="Trend comparison" tabindex="0">'
+      +'<table><thead><tr><th scope="col">Trend form</th><th scope="col">Mean absolute error ('+esc(durationUnitSymbol())+')'
+      +'</th><th scope="col">R²</th><th scope="col">Selected fit</th></tr></thead><tbody>'+candidates+'</tbody></table></div>'
+    :'<p>'+esc(analysis?.reason||'No fitted trend is available for this metric and source.')+'</p>';
+  const method=analysis?.method_id?[analysis.method_id,analysis.method_version?'version '+analysis.method_version:''].filter(Boolean).join(' · '):'';
+  const technical=analysis?'<p>'+esc([method,n0(analysis.observed_days)+' eligible business dates',n0(analysis.missing_days)+' dates without readings'].filter(Boolean).join(' · '))+'.</p>'
+    +'<p>Fits use elapsed calendar days and eligible daily readings. Dates without readings retain their calendar spacing and supply no observed value to the fit.</p>'
+    +(diagnostics?'<p>'+esc(n0(diagnostics.consecutive_pairs)+' consecutive residual pairs. Lag-one residual correlation: '
+      +(Number.isFinite(diagnostics.lag_one_residual_correlation)?displayNumber(diagnostics.lag_one_residual_correlation,3):'unavailable'))+'.</p>':''):'';
+  const landmarks=fit&&Object.keys(fit.landmarks||{}).length?'<h4>Historical trend details</h4><ul>'
+    +historicalLandmarkFacts(fit).map(fact=>'<li>'+esc(fact)+'</li>').join('')
+    +(leveling?'<li>'+esc('The fitted trend averaged '+historicalReading(leveling.average)+' from '+historicalDate(leveling.date)
+      +' to '+historicalDate(leveling.until)+(Number.isFinite(endTarget)?', '+(leveling.average===endTarget?'at':leveling.average<endTarget?'below':'above')
+      +' the end-of-period target of '+historicalReading(endTarget):''))+'.</li>':'')+'</ul>':'';
+  return '<h3>How did '+esc(ml())+' change day to day?</h3>'+chartAppliedScope({},R)
+    +(source?'<p>Source: '+esc([dataset,source,durationUnitName()].filter(Boolean).join(' · '))+'.</p>':'')
+    +'<p>'+esc(dailyCalculation(R))+'</p><p>Eligible basis in this scope: '+esc(n0(R.count)+' '+gCountLabel(R).toLowerCase())+'.</p>'
+    +(Number.isFinite(lineage?.excluded_record_count)?'<p>'+n0(lineage.excluded_record_count)+' source rows were excluded under the analysis data policy.</p>':'')
+    +'<h4>Trend comparison</h4>'+fitEvidence+technical+landmarks
+    +'<h4>Dated requirements</h4>'+(requirements?'<div class="scroll g-historical-table" role="region" aria-label="Dated requirements" tabindex="0">'
+      +'<table><thead><tr><th scope="col">Applied dates</th><th scope="col">Target</th><th scope="col">Lower limit</th>'
+      +'<th scope="col">Upper limit</th></tr></thead><tbody>'+requirements+'</tbody></table></div>'
+      :'<p>'+esc(result.referenceReason||'No target or business specification limit applies.')+'</p>')
+    +'<h4>Daily readings</h4>'+baselineDailyTable(result.days,R,result.trend,true);
 }
 function gObservedTrend(R){
   if(hasRecordedEvents(R))return gRecordedEvents(R);
@@ -1961,6 +2228,23 @@ function dailyEventSourceCurrent(R){
   const source=R.daily_event_comparison?.source;
   return !observedState(R).eventSourceInvalid&&(!source||source.upload_id===optionalUploadIds().D08);
 }
+function dailyReferenceIntervals(selected,{start,end}){
+  return (selected?.intervals||[]).filter(ref=>ref.effective_start<=end&&(!ref.effective_end||ref.effective_end>start))
+    .map(ref=>({start:ref.effective_start,end:ref.effective_end,target:ref.target,rule:ref.target_rule,
+      lower:ref.lower_specification_limit,upper:ref.upper_specification_limit}));
+}
+function dailyReadingSeries({start,end},refs,readings){
+  const days=[];
+  let refIndex=0;
+  for(let date=start;date<=end;date=nextDay(date)){
+    while(refs[refIndex]?.end&&refs[refIndex].end<=date)refIndex++;
+    const ref=refs[refIndex]?.start<=date?refs[refIndex]:null;
+    const reading=readings.get(date);
+    days.push({...reading,date,ref,value:Number.isFinite(reading?.value)?reading.value:null});
+    if(date===end)break;
+  }
+  return days;
+}
 function dailyEventSelection(R,state){
   const recorded=trendEvents(R,state);
   const scope=dailyEventScope(R,state),lines=new Set(scope.lines_of_business);
@@ -1970,10 +2254,7 @@ function dailyEventSelection(R,state){
   const selected=!scope.pairs?references?.account
     :work.lines?.length===1&&!work.drivers?references?.line_of_business[work.lines[0]]
     :work.drivers?.length===1&&!work.lines?references?.contact_type[work.drivers[0]]:null;
-  const refs=(selected?.intervals||[]).filter(ref=>ref.effective_start<=state.end&&(!ref.effective_end||ref.effective_end>state.start))
-    .map(ref=>({start:ref.effective_start,end:ref.effective_end,target:ref.target,rule:ref.target_rule,
-      lower:ref.lower_specification_limit,upper:ref.upper_specification_limit}));
-  const readings=new Map(),days=[];
+  const refs=dailyReferenceIntervals(selected,state),readings=new Map();
   const committed=state===observedState(R)&&dailyEventSourceCurrent(R)&&state.eventComparison;
   if(committed){
     for(const rows of Object.values(committed.weekdays))for(const row of rows)readings.set(row.key,row);
@@ -1987,13 +2268,7 @@ function dailyEventSelection(R,state){
     }
     for(const day of readings.values())day.value=day.total/day.count;
   }else for(const row of R.by_day)readings.set(row.key,row);
-  let refIndex=0;
-  for(let date=state.start;date<=state.end;date=nextDay(date)){
-    while(refs[refIndex]?.end&&refs[refIndex].end<=date)refIndex++;
-    const ref=refs[refIndex]?.start<=date?refs[refIndex]:null;
-    days.push({...readings.get(date),date,ref,value:readings.get(date)?.value??null});
-    if(date===state.end)break;
-  }
+  const days=dailyReadingSeries(state,refs,readings);
   const displayEvents=events.filter(event=>!state.eventTypes||state.eventTypes.includes(event.type));
   return {refs,days,observed:days.filter(day=>Number.isFinite(day.value)),events,displayEvents,
     markers:state.events?displayEvents:[],referenceReason:selected?.reason,
@@ -2106,7 +2381,7 @@ function dailyComparisonNarrative(comparison){
     const label=name(type);
     return types.some(other=>other.type!==type.type&&name(other)===label)?label+' ('+type.type+')':label;
   });
-  return {takeaway,facts,next};
+  return {takeaway,facts,next,labels:types.map(name)};
 }
 function dailyComparisonTable(label,columns,rows){
   return '<div class="scroll" role="region" aria-label="'+esc(label)+'" tabindex="0"><table aria-label="'+esc(label)+'"><thead><tr>'
@@ -2173,7 +2448,7 @@ function dailyComparisonGraphic(R,comparison,eventTypes){
   const position=value=>100*(value-low)/(high-low), zero=position(0);
   const ticks=[...new Set([low,low/2,0,high/2,high])].filter(value=>value===0||Math.abs(position(value)-zero)>=9);
   const axis='<div class="dt-comparison-axis" aria-hidden="true">'+ticks.map(value=>
-    `<span class="dt-axis-tick" data-edge="${value===low?'start':value===high?'end':''}" style="--tick-x:${position(value)}%"><span>${value>0?'+':''}${Number((value/durationFactor()).toPrecision(3))}</span></span>`).join('')+'</div>';
+    `<span class="dt-axis-tick" data-edge="${value===low?'start':value===high?'end':''}" style="--tick-x:${position(value)}%"><span>${esc(signedChartNumber(value))}</span></span>`).join('')+'</div>';
   const key=(text,mark)=>'<li class="dt-key">'+text+mark+'</li>';
   const qualification='Selected for Takeaway';
   const selected=new Set(comparison.takeaway?.types);
@@ -2198,10 +2473,10 @@ function dailyComparisonGraphic(R,comparison,eventTypes){
     const end=position(type.mean), {side,sign,tone}=directions[type.mean<0?0:1];
     const arrow=type.mean===0?'<span class="dt-gap-zero" aria-hidden="true"></span>'
       :`<span class="dt-gap-segment" data-performance="${tone}" data-gap-side="${side}" style="--arrow-start:${Math.min(zero,end)}%;--arrow-length:${Math.abs(end-zero)}%;--arrow-direction:${sign}" aria-hidden="true"><i class="dt-gap-arrow"></i><i class="dt-gap-endpoint"></i></span>`;
-    return `<div class="dt-comparison-row" style="--gap-mean:${end}%">${label}<div class="dt-gap-track"${selected.has(type.type)?' data-qualifies':''} style="--gap-zero:${zero}%"><span class="dt-gap-mean-line" aria-hidden="true"></span>${arrow}${dots}</div><div class="dt-gap-callout"><span class="dt-gap-label">Mean gap ${esc(dailyGap(type.mean))}</span></div>${axis}</div>`;
+    return `<div class="dt-comparison-row" style="--gap-mean:${end}%">${label}<div class="dt-gap-track"${selected.has(type.type)?' data-qualifies':''} style="--gap-zero:${zero}%"><span class="dt-gap-mean-line" aria-hidden="true"></span>${arrow}${dots}</div><div class="dt-gap-callout"><span class="dt-gap-label" title="${esc(dailyGap(type.mean))}">Mean gap ${esc(signedChartNumber(type.mean))}</span></div>${axis}</div>`;
   }).join('');
   return '<div class="dt-frame dt-comparison-frame">'+legend+rows
-    +'<div class="dt-comparison-unit"><span>Lower '+esc(ml())+'</span><span>'+esc(ML()+' difference ('+dailyGapUnit(true)+')')+'</span><span>Higher '+esc(ml())+'</span></div></div>';
+    +'<div class="dt-comparison-unit"><span>Lower '+esc(ml())+'</span><span title="'+esc(ML()+' difference ('+dailyGapUnit(true)+')')+'">'+esc(ML()+' difference')+'</span><span>Higher '+esc(ml())+'</span></div></div>';
 }
 const dailyEventDot=type=>`<i class="dt-dot dt-event-key" style="--event-color:${dailyEventColor(type)}" aria-hidden="true"></i>`;
 const arrowKey=(performance,direction)=>`<i class="dt-gap-arrow" data-performance="${performance}" style="--arrow-direction:${direction}" aria-hidden="true"></i>`;
@@ -2214,8 +2489,11 @@ function dailySpecificationKey(refs){
 function dailyChartLegend(r){
  const key=(label,glyph)=>`<li class="dt-key">${esc(label)}${glyph}</li>`;
  const keys=[key('Actual',tracePointKey('<i class="dt-dot dt-actual-key"></i>'))];
- if(r.refs.some(ref=>ref.target!==undefined))keys.push(key('Target','<i class="dt-target" aria-hidden="true"></i>'));
+ if(r.refs.some(ref=>Number.isFinite(ref.target)))keys.push(key('Target','<i class="dt-target" aria-hidden="true"></i>'));
  if(r.refs.some(ref=>Number.isFinite(ref.lower)||Number.isFinite(ref.upper)))keys.push(key('Business specification limits',dailySpecificationKey(r.refs)));
+ if(r.trend?.fit)keys.push(key('Fitted trend','<i class="dt-fit-key" aria-hidden="true"></i>'));
+ if(Number.isFinite(r.trend?.fit?.terminal_delta))keys.push(key('Illustrative direction',
+   '<svg width="24" height="9" viewBox="0 0 24 9" aria-hidden="true"><path class="dt-direction-shaft" d="M0 4.5H20"/><path class="dt-direction-head" d="M18 1L24 4.5L18 8Z"/></svg>'));
  for(const type of dailyEventTypes(r.markers)){
   keys.push(key(dailyEventLabel(type),tracePointKey(dailyEventDot(type))));
  }
@@ -2258,7 +2536,7 @@ function businessScaleBands({target,rule,lower,upper},low,high){
  if(end<high)tails.push({from:end,to:high,color:red});
  return {start,end,inside,tails};
 }
-function runReferenceLayers(spans,{id,trace,left,right,top,bottom,low,high,y,width}){
+function runReferenceLayers(spans,{id,trace,left,right,top,bottom,low,high,y,width,showLabels=true,dailyScope=null}){
  const defs=[],scales=[],overlays=[],washes=[];
  spans.forEach(({ref,x1,x2},i)=>{
   const gradient=id+'-gradient-'+i,clip=id+'-clip-'+i;
@@ -2266,16 +2544,20 @@ function runReferenceLayers(spans,{id,trace,left,right,top,bottom,low,high,y,wid
   const bands=[...inside,...tails].sort((a,b)=>b.from-a.from);
   const stops=bands.flatMap(({from,to,color})=>[to,from].map(value=>`<stop offset="${(high-value)/(high-low)}" style="stop-color:${color}"/>`)).join('');
   const upper=y(end),lower=y(start),head=Math.min(15,(lower-upper)/2);
+  const topHead=dailyScope&&!Number.isFinite(ref.upper)?0:head;
+  const bottomHead=dailyScope&&!Number.isFinite(ref.lower)?0:head;
   const arrow=upper===lower?`<path class="dt-spec-point" d="M8.5 ${upper}H27.5" stroke="var(--emerald-700)" stroke-width="2"/>`
-   :`<path class="dt-direction-arrow" d="M18 ${upper} L32.5 ${upper+head} H27.5 V${lower-head} H32.5 L18 ${lower} L3.5 ${lower-head} H8.5 V${upper+head} H3.5 Z" fill="url(#${gradient})"/>`;
+   :`<path class="dt-direction-arrow" d="M18 ${upper} L${topHead?32.5:27.5} ${upper+topHead} H27.5 V${lower-bottomHead} H${bottomHead?32.5:27.5} L18 ${lower} L${bottomHead?3.5:8.5} ${lower-bottomHead} H8.5 V${upper+topHead} H${topHead?3.5:8.5} Z" fill="url(#${gradient})"/>`;
   const extensions=tails.map(({from,to,color})=>{
-   const first=y(from)+(from===end?head:0),last=y(to)-(to===start?head:0);
+   const first=y(from)+(from===end?topHead:0),last=y(to)-(to===start?bottomHead:0);
    return `<path class="dt-spec-tail" d="M18 ${first}V${last}" stroke="${color}" stroke-width="12"/>`;
   }).join('');
-  const target=Number.isFinite(ref.target)?`<rect class="dt-target-midpoint" x="0" y="${y(ref.target)-7}" width="36" height="14" rx="4"/><text class="dt-target-scale-label" x="18" y="${y(ref.target)+3}" text-anchor="middle">${esc(dailyValue(ref.target))}</text>`:'';
+  const target=showLabels&&Number.isFinite(ref.target)?`<rect class="dt-target-midpoint" x="0" y="${y(ref.target)-7}" width="36" height="14" rx="4"/><text class="dt-target-scale-label" x="18" y="${y(ref.target)+3}" text-anchor="middle">${esc(chartNumber(ref.target))}</text>`:'';
   defs.push(`<linearGradient id="${gradient}" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="${top}" y2="${bottom}">${stops}</linearGradient><clipPath id="${clip}"><rect x="${x1}" y="${top-2}" width="${x2-x1}" height="${bottom-top+4}"/></clipPath>`);
   const label=[Number.isFinite(ref.target)?'Target '+dailyValue(ref.target):'',dailySpecification(ref)==='—'?'':'Specification '+dailySpecification(ref)].filter(Boolean).join(' · ');
-  scales.push(`<g class="dt-target-scale"${Number.isFinite(ref.target)?` data-target="${ref.target}"`:''} role="img" aria-label="${esc(label)}"${i===spans.length-1?'':' hidden'}>${extensions}${arrow}${target}</g>`);
+  const access=dailyScope?' tabindex="0" '+readingDetailAttributes(historicalReferenceDetail(ref,dailyScope))
+    :' aria-label="'+esc(label)+'"';
+  scales.push(`<g class="dt-target-scale"${Number.isFinite(ref.target)?` data-target="${ref.target}"`:''} role="img"${access}${i===spans.length-1?'':' hidden'}>${extensions}${arrow}${target}</g>`);
   washes.push(`<g class="dt-context-wash" aria-hidden="true" hidden><rect x="${left}" y="${top}" width="${Math.max(0,x1-left)}" height="${bottom-top}"/><rect x="${x2}" y="${top}" width="${Math.max(0,right-x2)}" height="${bottom-top}"/></g>`);
   const levels=new Map();
   if(Number.isFinite(ref.lower))levels.set(ref.lower,inside[0]?.color||dailyTargetScaleColor('emerald',60));
@@ -2289,6 +2571,7 @@ function runReferenceLayers(spans,{id,trace,left,right,top,bottom,low,high,y,wid
 }
 function bindRunReference(svg,owner,spans,{left,right,top,bottom,width}){
  const arrows=svg.querySelectorAll('.dt-target-scale');
+ const callouts=svg.querySelectorAll('.dt-reference-callouts');
  const overlays=svg.querySelectorAll('.dt-target-trace');
  const washes=svg.querySelectorAll('.dt-context-wash');
  const targetMarks=svg.querySelectorAll('[data-target-period]');
@@ -2298,6 +2581,7 @@ function bindRunReference(svg,owner,spans,{left,right,top,bottom,width}){
   active=index;
   const arrowIndex=index??spans.length-1;
   arrows.forEach((arrow,i)=>arrow.toggleAttribute('hidden',i!==(arrowIndex===-1?spans.length:arrowIndex)));
+  callouts.forEach((group,i)=>group.toggleAttribute('hidden',i!==(index??spans.length)));
   overlays.forEach((overlay,i)=>overlay.toggleAttribute('hidden',i!==index));
   washes.forEach((wash,i)=>wash.toggleAttribute('hidden',i!==index));
   const hasActiveTarget=index!==null&&index>=0;
@@ -2312,6 +2596,7 @@ function bindRunReference(svg,owner,spans,{left,right,top,bottom,width}){
   if(event.pointerType==='touch')return;
   const box=svg.getBoundingClientRect(), scale=width/box.width;
   const px=(event.clientX-box.left)*scale, py=(event.clientY-box.top)*scale;
+  if(event.target.closest?.('.dt-target-scale,.dt-reference-callout,.dt-historical-reference'))return;
   select(px>=left&&px<=right&&py>=top&&py<=bottom
    ?spans.findIndex(({x1,x2})=>px>=x1&&(px<x2||px===right&&x2===right)):null);
  },options);
@@ -2323,24 +2608,51 @@ function bindRunReference(svg,owner,spans,{left,right,top,bottom,width}){
  owner.resetRunReference=()=>select(null);
  if(owner.contains(document.activeElement))focused(document.activeElement);
 }
-function runReadingRequirements(value,reference,missing='No target applies'){
+function runReadingRequirements(value,reference,missing='No target applies',format=dailyValue,formatGap=insSignedGap){
  const target=reference?.target,lower=reference?.lower,upper=reference?.upper;
  const gap=Number.isFinite(target)?value-target:null;
- const targetStatus=gap===null?missing:'Target '+dailyValue(target)+' · '+(gap===0?'On target':
-  ((reference.rule==='at_or_above'?gap>0:gap<0)?'Meets target':'Misses target')+' · Gap '+insSignedGap(gap));
+ const targetStatus=gap===null?missing:'Target '+format(target)+' · '+(gap===0?'On target':
+  ((reference.rule==='at_or_above'?gap>0:gap<0)?'Meets target':'Misses target')+' · Gap '+formatGap(gap));
  if(lower==null&&upper==null)return targetStatus;
  const outside=(lower!=null&&value<lower)||(upper!=null&&value>upper);
- return targetStatus+' · '+(outside?'Outside specification limits':'Within specification limits');
+ return [targetStatus,outside?'Outside specification limits':'Within specification limits'].filter(Boolean).join(' · ');
 }
 function runChartMarkSizes(slot,normalTrace=3){
   const dot=Math.max(3,Math.min(slot/2,10));
   return {dot,event:Math.max(9,Math.min(1.6*dot,16)),trace:slot<6?2:normalTrace};
 }
-function drawRecordedEvents(plot,r){
- const W=plot.clientWidth;
- if(W<160||plot.dataset.width===String(W))return;
- plot.dataset.width=W;
+function dailyReferenceCallouts(marks,boxLeft,top,bottom,y){
+ const ordered=marks.map(mark=>({...mark,anchorY:y(mark.value)})).sort((a,b)=>a.anchorY-b.anchorY);
+ const spacing=22;
+ ordered.forEach((mark,i)=>{mark.labelY=Math.max(mark.anchorY,i?ordered[i-1].labelY+spacing:top+9);});
+ for(let i=ordered.length-1;i>=0;i--){
+  ordered[i].labelY=Math.min(ordered[i].labelY,i===ordered.length-1?bottom-9:ordered[i+1].labelY-spacing);
+ }
+ return ordered.map(({label,width,kind,anchorY,labelY,edge,detail})=>
+  `<g class="dt-reference-callout is-${kind}"${detail?' tabindex="0" role="img" '+readingDetailAttributes(label+' · '+detail):''}><line x1="${edge}" y1="${anchorY}" x2="${boxLeft}" y2="${labelY}" aria-hidden="true"/>`
+  +`<rect x="${boxLeft}" y="${labelY-9}" width="${width}" height="18" rx="3"/>`
+  +`<text x="${boxLeft+width/2}" y="${labelY+4}" text-anchor="middle">${esc(label)}</text></g>`).join('');
+}
+function historicalReferenceDetail(ref,{start,end}){
+ const from=ref.start>start?ref.start:start;
+ const until=ref.end&&ref.end<=end?new Date(Date.parse(ref.end)-86400000).toISOString().slice(0,10):end;
+ return [historicalDate(from)+' to '+historicalDate(until),...[
+   ['Target',ref.target],['Lower limit',ref.lower],['Upper limit',ref.upper]
+ ].filter(([,value])=>Number.isFinite(value)).map(([label,value])=>label+' '+historicalReading(value))].join(' · ');
+}
+function historicalFitDetail(point,{fit,score}){
+  return historicalDate(point.date)+' · Fitted trend '+historicalReading(point.value)+' · '+historicalForms[fit.form]
+    +' · '+(score===null?'R² unavailable':'R² '+score);
+}
+function dailyPlotLayout(r,clientWidth,historical,showLabels,fontFamily){
  const figures=r.observed.map(d=>d.value).concat(r.refs.flatMap(ref=>[ref.lower,ref.upper,ref.target].filter(Number.isFinite)));
+ const fit=r.trend?.fit;
+ if(fit)figures.push(...r.trend.values.values());
+ const last=r.trend?.values.get(r.days.at(-1)?.date);
+ const delta=fit?.terminal_direction==='level'?0:fit?.terminal_delta;
+ const direction=historical&&Number.isFinite(last)&&Number.isFinite(delta)&&fit?.terminal_direction
+   ?{label:fit.terminal_direction,last,delta}:null;
+ if(direction&&Number.isFinite(last+2*delta))figures.push(Math.max(0,last+2*delta));
  const min=Math.min(...figures),max=Math.max(...figures);
  const pad=metricKind()==='seconds'?8:Math.max((max-min)*.08,.01);
  const low=figures.length?(metricKind()==='seconds'?Math.max(0,min-pad):min-pad):0;
@@ -2348,15 +2660,63 @@ function drawRecordedEvents(plot,r){
  const scale=10**Math.floor(Math.log10((high-low)/6));
   const tick=[1,2,2.5,5,10].map(n=>n*scale).find(n=>Math.ceil((high-Math.floor(low/n)*n)/n)<=6)||20*scale;
  const lo=Math.floor(low/tick)*tick, hi=lo+6*tick;
- const gutter=r.refs.length?40:0;
- const left=53+gutter, right=W-23, step=(right-left)/r.days.length;
+ const gutter=historical||r.refs.length?40:0;
+ const context=document.createElement('canvas').getContext('2d');
+ context.font='12px '+fontFamily;
+ const axisLabel=chartTickFormatter(durationFactor(),tick);
+ const axisWidth=Math.max(...Array.from({length:7},(_,i)=>context.measureText(axisLabel(lo+i*tick)).width));
+ const left=53+gutter+Math.max(0,Math.ceil(axisWidth)-32);
+ context.font='11px '+fontFamily;
+ const referenceKinds=[['upper','Upper limit'],['target','Target'],['lower','Lower limit']];
+ const references=showLabels?r.refs.map(ref=>referenceKinds
+  .filter(([kind])=>Number.isFinite(ref[kind])).map(([kind,name])=>{
+   const value=ref[kind], label=name+' '+chartNumber(value);
+   return {value,label,kind,width:Math.ceil(context.measureText(label).width)+(historical?10:12)};
+  })):[];
+ const lastRef=r.refs.at(-1);
+ const targetCoversEnd=Number.isFinite(lastRef?.target)&&(!lastRef.end||lastRef.end>r.days.at(-1)?.date);
+ const latestPrefixWidth=targetCoversEnd?0:Math.ceil(context.measureText('Latest ').width);
+ const rightGutter=Math.max(23,...references.flat().map(mark=>mark.width+18+(mark.kind==='target'?latestPrefixWidth:0)));
+ const W=Math.max(clientWidth,left+64+rightGutter), right=W-rightGutter;
+ const room=right-left;
+ const extension=direction?Math.max(18,2*room/(r.days.length+2)):0;
+ const historyRight=right-extension, step=(historyRight-left)/r.days.length;
+ if(direction){
+   direction.dx=extension;
+   direction.dy=-direction.delta*(extension/step)*204/(hi-lo);
+   const length=Math.hypot(direction.dx,direction.dy);
+   const headroom=direction.dy>0?(direction.last-lo)*204/(hi-lo):(hi-direction.last)*204/(hi-lo);
+   const ratio=direction.dy?Math.max(0,Math.min(1,headroom/Math.abs(direction.dy))):1;
+   direction.detached=length*ratio<10;
+   const drawnRatio=direction.detached?12/length:ratio;
+   direction.dx*=drawnRatio;
+   direction.dy*=drawnRatio;
+ }
+ return {lo,hi,tick,gutter,left,right,historyRight,step,W,references,direction,context,latestPrefixWidth};
+}
+function directionArrow(id,x,y,dx,dy){
+ return `<defs><marker id="${id}" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="dt-direction-head" d="M0 0L8 4L0 8Z"/></marker></defs>`
+   +`<path class="dt-direction-shaft" d="M${x} ${y}l${dx} ${dy}" marker-end="url(#${id})"/>`;
+}
+function drawDailyPlot(plot,r){
+ const historical=plot.hasAttribute('data-historical-daily');
+ const showLabels=historical||chartLabelsShown(observedState(xR()),'trend');
+ const clientWidth=plot.clientWidth;
+ if(!r.days.length||clientWidth<160||plot.dataset.width===String(clientWidth))return;
+ plot.dataset.width=clientWidth;
+ const {lo,hi,tick,gutter,left,right,historyRight,step,W,references,direction,context,latestPrefixWidth}=dailyPlotLayout(
+   r,clientWidth,historical,showLabels,getComputedStyle(plot).fontFamily);
  const x=i=>left+step*(i+.5);
+  const fitted=r.trend?.fit?r.days.flatMap((day,i)=>r.trend.values.has(day.date)
+    ?[{date:day.date,ref:day.ref,x:x(i),value:r.trend.values.get(day.date)}]:[]):[];
  const spans=r.refs.map(ref=>{
   const offset=date=>Math.round((Date.parse(date)-Date.parse(r.days[0].date))/86400000);
-    const x1=left+step*Math.max(0,offset(ref.start)), x2=left+step*Math.min(r.days.length,ref.end?offset(ref.end):r.days.length);
+    const until=ref.end?offset(ref.end):r.days.length;
+    const x1=left+step*Math.max(0,offset(ref.start));
+    const x2=direction?.dx>0&&until>=r.days.length?right:left+step*Math.min(r.days.length,until);
   return {ref,x1,x2};
  });
- const targets=spans.filter(({ref})=>ref.target!==undefined);
+ const targets=spans.filter(({ref})=>Number.isFinite(ref.target));
  const spec=[];
  for(const range of spans.filter(({ref})=>(Number.isFinite(ref.lower)||Number.isFinite(ref.upper)))){
   const previous=spec.at(-1);
@@ -2368,16 +2728,42 @@ function drawRecordedEvents(plot,r){
   const event=group[0], index=r.days.findIndex(d=>d.date===event.date);
   return {group,event,reading:r.days[index],x:x(index),width:26};
  });
- const {counts,positioned}=placeDailyPlotLabels([...eventLabels,...targets.map(({ref,x1,x2})=>({ref,x:(x1+x2)/2,width:70}))],left,right);
+  const score=r.trend?.score;
+  const scoreLabels=[];
+  if(fitted.length&&score!=null){
+    const compact=r.trend.fit.r_squared.toFixed(1);
+    const label=r.trend.fit.r_squared<.5&&Number(compact)>=.5?'R² < 0.5':'R² '+compact;
+    const style=getComputedStyle(plot);
+    context.font='700 '+style.getPropertyValue('--font-daily-detail').trim()+' '+style.fontFamily;
+    const width=Math.ceil(context.measureText(label).width)+12;
+    const point=fitted.findLast(point=>point.x<=right-width/2)||fitted.at(-1);
+    scoreLabels.push({point,label,x:point.x,width});
+  }
+  const latest=targets.at(-1);
+  const {counts,positioned}=showLabels?placeDailyPlotLabels([...eventLabels,...targets.slice(0,-1).map(({ref,x1,x2})=>({ref,x:(x1+x2)/2,width:70})),...scoreLabels],left,historyRight)
+  :{counts:{above:0,below:0},positioned:eventLabels};
  const top=16+18*counts.above, bottom=top+204, axisY=bottom+18*counts.below+(counts.below?5:0);
  const y=v=>bottom-(v-lo)*(bottom-top)/(hi-lo);
+ const scope={start:r.days[0].date,end:r.days.at(-1).date},dailyScope=historical?scope:null;
+ const latestMark=latest&&references[spans.indexOf(latest)]?.find(mark=>mark.kind==='target');
+ const callouts=showLabels&&spans.length?[...spans,spans.at(-1)].map((span,index)=>{
+   const resting=index===spans.length;
+   const labels=references[resting?index-1:index].filter(mark=>!resting||!latestPrefixWidth||mark.kind!=='target').map(mark=>({
+     ...mark,edge:span.x2,detail:historicalReferenceDetail(span.ref,scope)}));
+   if(resting&&latestMark&&latestPrefixWidth)
+     labels.push({...latestMark,label:'Latest '+latestMark.label,width:latestMark.width+latestPrefixWidth,
+       edge:latest.x2,detail:historicalReferenceDetail(latest.ref,scope)});
+   return '<g class="dt-reference-callouts"'+(resting?'':' hidden')+'>'
+     +dailyReferenceCallouts(labels,right+10,top,bottom,y)+'</g>';
+ }).join(''):'';
  const periodIndex=new Map(spans.map(({ref},index)=>[ref,index]));
  const periodAttr=ref=>periodIndex.has(ref)?' data-target-period="'+periodIndex.get(ref)+'"':'';
  const line=(className,x1,x2,y1,y2,ref)=>`<line class="${className}" x1="${x1}" x2="${x2}" y1="${y1}" y2="${y2}"${periodAttr(ref)}/>`;
  const text=(value,x,y,anchor='middle',css='')=>`<text class="${css}" x="${x}" y="${y}" text-anchor="${anchor}">${value}</text>`;
  const rect=(css,x,y,w,h,rx=0)=>`<rect class="${css}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"/>`;
  const mark=(css,kind,date,label,content,style='',refIndex=null)=>`<g class="${css}" role="img" tabindex="0" ${readingDetailAttributes(label)} data-${kind}-date="${date}"${refIndex===null?'':` data-reference-index="${refIndex}"`}${style?' style="'+style+'"':''}>${content}</g>`;
- const grid=Array.from({length:7},(_,i)=>{const v=lo+i*tick,yy=y(v);return line('dt-grid',left,right,yy,yy)+line('dt-axis',left-4,left,yy,yy)+text(chartValue(v,tick),left-8,yy+4,'end');}).join('');
+ const tickLabel=chartTickFormatter(durationFactor(),tick);
+ const grid=Array.from({length:7},(_,i)=>{const v=lo+i*tick,yy=y(v);return line('dt-grid',left,right,yy,yy)+line('dt-axis',left-4,left,yy,yy)+text(esc(tickLabel(v)),left-8,yy+4,'end');}).join('');
  const fills=spec.filter(({ref})=>Number.isFinite(ref.lower)&&Number.isFinite(ref.upper)).map(({ref,x1,x2})=>rect('dt-band',x1,y(ref.upper),x2-x1,y(ref.lower)-y(ref.upper))).join('');
  const boundaries=spec.flatMap(({ref,x1,x2})=>[ref.upper,ref.lower].filter(Number.isFinite)
     .map(value=>line('dt-spec-line',x1,x2,y(value),y(value)))).join('');
@@ -2391,13 +2777,16 @@ function drawRecordedEvents(plot,r){
  const pointGradients=[];
  const plotScope=plot.closest('.g-trend-focus')?'focus':'slide';
  const sizes=runChartMarkSizes(step);
- const scaleId='dt-'+plotScope,traceId=scaleId+'-trace',traceWidth=sizes.trace;
+ const scaleId=(historical?'dt-historical-':'dt-')+plotScope,traceId=scaleId+'-trace',traceWidth=sizes.trace;
  const mid=(top+bottom)/2;
- const layers=runReferenceLayers(spans,{id:scaleId,left,right,top,bottom,low:lo,high:hi,y,width:traceWidth,
+ const layers=runReferenceLayers(spans,{id:scaleId,left,right,top,bottom,low:lo,high:hi,y,width:traceWidth,showLabels,dailyScope,
   trace:(value,color)=>runLevelTrace(r.days,value,color,x,y)});
  const marks=r.days.map((d,i)=>{
   if(d.value===null)return '';
-  const reference=' · '+runReadingRequirements(d.value,d.ref);
+  const requirements=historical
+    ?runReadingRequirements(d.value,d.ref,'',historicalReading,gap=>historicalSign(gap)+historicalDelta(gap))
+    :runReadingRequirements(d.value,d.ref);
+  const reference=requirements?' · '+requirements:'';
   const records=eventsByDate[d.date]||[], types=dailyEventTypes(records);
   const readingX=x(i), readingY=y(d.value);
   const radius=(types.length?sizes.event:sizes.dot)/2;
@@ -2410,34 +2799,64 @@ function drawRecordedEvents(plot,r){
   }
   const style=fill?' style="fill:'+fill+'"':'';
   const details=records.length?' · '+dailyEventDetail(records):'';
-  return mark('dt-point','reading',d.date,dailyFullDate.format(new Date(d.date))+' · Actual '+dailyValue(d.value)+reference+details,
+  const actual=historical?historicalDate(d.date)+' · Actual '+historicalReading(d.value):dailyFullDate.format(new Date(d.date))+' · Actual '+dailyValue(d.value);
+  return mark('dt-point','reading',d.date,actual+reference+details,
    `<circle class="dt-reading dt-reading-${types.length?'event':'ordinary'}" cx="${readingX}" cy="${readingY}" r="${radius}"${style}${types.length?'':periodAttr(d.ref)}/><circle cx="${readingX}" cy="${readingY}" r="${Math.max(4,Math.min(10,step/2))}" fill="transparent"/>`,'',periodIndex.get(d.ref)??-1);
  }).join('');
- const labelMarks=positioned.map(({group,event,reading,ref,x:anchor,center,width,side,lane})=>{
+  const fitTrace=fitted.map((point,i)=>`${i?'L':'M'}${point.x.toFixed(1)} ${y(point.value).toFixed(1)}`).join(' ');
+  const endFit=fitted.at(-1);
+  const cueX=direction?.detached?historyRight+3:endFit?.x;
+  const cueY=direction?.detached?(top+bottom)/2:endFit?y(endFit.value):null;
+  const cue=endFit&&direction&&direction.dx>0?mark('dt-direction-cue','direction',endFit.date,
+    'Illustrative direction · '+direction.label+' at the end of the fitted trend',
+    directionArrow(scaleId+'-direction-head',cueX,cueY,direction.dx,direction.dy)
+    +`<path class="dt-fit-hit" d="M${cueX} ${cueY}l${direction.dx} ${direction.dy}"/>`):'';
+  const fitMark=endFit?mark('dt-fit-mark','fit',endFit.date,historicalFitDetail(endFit,r.trend),
+    `<path class="dt-fit-line" d="${fitTrace}"/><path class="dt-fit-hit" d="${fitTrace}"/>`,'',periodIndex.get(endFit.ref)??-1):'';
+  const labelMarks=positioned.map(({group,event,reading,ref,point,label:scoreLabel,x:anchor,center,width,side,lane})=>{
+   const value=reading?.value;
+   if(!showLabels&&value!=null)return '';
   const above=side==='above', yy=above?top-18*(lane+1):bottom+3+18*lane;
   const startY=above?yy+15:yy;
-  const box=rect(ref?'dt-ref-box':'dt-marker-chip',center-width/2,yy,width,15,4);
-  if(ref)return line('dt-target-leader',center,anchor,startY,y(ref.target),ref)+box+text('Target '+durationNumber(ref.target,durationUnit()==='seconds'),center,yy+11,'middle','dt-target-label');
-  const value=reading?.value;
+   if(point){
+    const leader=line('dt-fit-score-leader',anchor,anchor,startY,y(point.value));
+    const tile=rect('dt-fit-score-box',center-width/2,yy,width,15,3)+text(esc(scoreLabel),center,yy+11,'middle','dt-fit-score-label');
+    return leader+mark('dt-fit-score','fit-score',point.date,historicalFitDetail(point,r.trend),tile,'',periodIndex.get(point.ref)??-1);
+   }
+   if(ref){
+    const tile=line('dt-target-leader',center,anchor,startY,y(ref.target),ref)
+      +rect('dt-ref-box',center-width/2,yy,width,15,4)+text('Target '+chartNumber(ref.target),center,yy+11,'middle','dt-target-label');
+    return historical?mark('dt-historical-reference','reference',ref.start,historicalReferenceDetail(ref,dailyScope),tile,'',periodIndex.get(ref)):tile;
+   }
   const types=dailyEventTypes(group);
   const label=`${event.id} · ${dailyFullDate.format(new Date(event.date))} · ${dailyEventDetail(group)} · ${value==null?'No eligible reading':'Daily '+ml()+' '+dailyValue(value)}`;
-  const band=22/types.length;
-  const stripes=types.map((type,i)=>`<rect x="${center-11+i*band}" y="${yy+13}" width="${band}" height="2" rx="1" style="fill:${dailyEventColor(type)}"/>`).join('');
-  return mark('dt-marker gc-event-marker','event',event.date,label,
-   line('',center,anchor,startY,above?top:bottom)+line('',anchor,anchor,above?top:bottom,value==null?(above?bottom:top):y(value))+box+stripes+text(event.id,center,yy+11,'middle','dt-event-label'),
-   '--event-color:'+(types.length===1?dailyEventColor(types[0]):'var(--muted)'));
+   const edge=above?top:bottom;
+   const content=showLabels
+    ?line('',anchor,anchor,edge,value==null?(above?bottom:top):y(value))+line('',center,anchor,startY,edge)
+      +rect('dt-marker-chip',center-width/2,yy,width,15,4)+text(event.id,center,yy+11,'middle','dt-event-label')
+    :`<circle class="dt-marker-dot" cx="${anchor}" cy="${top-6}" r="4" fill="var(--event-color)"/>`;
+   return mark('dt-marker gc-event-marker','event',event.date,label,content,
+   '--event-color:'+(types.length===1?dailyEventColor(types[0]):'var(--muted)'),periodIndex.get(reading?.ref)??-1);
  }).join('');
- const every=Math.max(1,Math.ceil(67/step));
+ const every=Math.max(1,Math.ceil((historical?64:67)/step));
  const labels=r.days.map((d,i)=>{
   const last=i===r.days.length-1;
-  return last||(i%every===0&&(r.days.length-1-i)*step>50)?line('dt-date-axis',x(i),x(i),axisY,axisY+4)+text(dailyShortDate.format(new Date(d.date)),x(i),axisY+20,last&&step<40?'end':'middle'):'';
+  const clearance=historical?64:50;
+  return last||(i%every===0&&(r.days.length-1-i)*step>=clearance)?line('dt-date-axis',x(i),x(i),axisY,axisY+4)
+    +text(dailyShortDate.format(new Date(d.date)),x(i),axisY+20,last&&(historical||step<40)?'end':'middle'):'';
  }).join('');
  plot.innerHTML=`<svg viewBox="0 0 ${W} ${axisY+31}" height="${axisY+31}" role="group" aria-label="Daily ${esc(chartMetricAxis())}">
   <defs><path id="${traceId}" d="${trace}"/>${pointGradients.join('')}${layers.defs}</defs>
   ${spans.length?`<rect class="dt-plot-hit" x="${left}" y="${top}" width="${right-left}" height="${bottom-top}" fill="transparent"/>`:''}
-  <text class="dt-metric-axis-title" transform="translate(${12+gutter} ${mid}) rotate(-90)" text-anchor="middle">${esc(chartMetricAxis())}</text>
+  <text class="dt-metric-axis-title" transform="translate(${12+gutter} ${mid}) rotate(-90)" text-anchor="middle">${esc(ML())}</text>
   ${layers.scales}${fills}${layers.washes}${grid}${boundaries}${targetLines}${line('dt-date-axis dt-date-rule',left,right,axisY,axisY)}${labels}
-  <use href="#${traceId}" class="dt-actual dt-context-trace" style="--trace-width:${traceWidth}px"/>${layers.overlays}${labelMarks}${marks}</svg>`;
+  <use href="#${traceId}" class="dt-actual dt-context-trace" style="--trace-width:${traceWidth}px"/>${layers.overlays}${fitMark}${cue}${callouts}${labelMarks}${marks}</svg>`;
+ if(endFit)plot.querySelector('.dt-fit-mark').historicalPointerDetail=event=>{
+   const bounds=plot.firstElementChild.getBoundingClientRect();
+   const px=(event.clientX-bounds.left)*W/bounds.width;
+   const nearest=fitted.reduce((best,point)=>Math.abs(point.x-px)<Math.abs(best.x-px)?point:best);
+   return historicalFitDetail(nearest,r.trend);
+ };
  if(spans.length)bindRunReference(plot.firstElementChild,plot,spans,{left,right,top,bottom,width:W});
 }
 
@@ -2452,20 +2871,19 @@ function gRecordedEvents(R){
   const state=observedState(R), result=dailyEventSelection(R,state);
   const comparison=dailyComparison(R), narrative=dailyComparisonNarrative(comparison);
   const view=reportViews('trend',state).current[0];
-  const title=view==='table'?'Recorded account events':view==='comparison'?ML()+' difference by event type ('+dailyGapUnit()+')'
-    :'Daily '+ml()+' · '+durationUnitName();
+  const title=view==='table'?'Recorded account events':view==='comparison'?ML()+' difference by event type'
+    :'Daily '+ml();
   const show=result.observed.length||result.markers.length||result.refs.length;
   const body=view==='comparison'?dailyComparisonGraphic(R,comparison,state.eventTypes)
     :view==='table'?dailyEventsTable(result)
     :'<div class="dt-frame">'+(show?dailyChartLegend(result)+'<div class="dt-plot"></div>'
       :'<p class="dt-empty">No eligible readings in this selection.</p>')+'</div>';
-  const visual=reportChartControls('trend',state)+'<h4 class="g-insights-chart-title" id="g-observed-trend">'+esc(title)+'</h4>'+body;
-  const list=items=>'<ul>'+items.map(item=>takeawayListItem(item)).join('')+'</ul>';
-  const details='<h4>Facts</h4>'+list([...narrative.facts,'Analysis period from '+dailyDateLabel(state.start)+' to '+dailyDateLabel(state.end)+'.'])
+  const visual=reportChartControls('trend',state,true,view==='chart'&&(result.refs.length>0||result.markers.length>0))+'<h4 class="g-insights-chart-title" id="g-observed-trend">'+esc(title)+'</h4>'+body;
+  const details='<h4>Facts</h4><ul>'+narrative.facts.map(item=>takeawayListItem(item)).join('')+chartPeriodFact(state)+'</ul>'
     +gNextSteps(narrative.next,'Compare the recorded dates with their same-weekday benchmarks in Evidence before deciding on preventive or corrective actions.')
     +'<button type="button" id="g-trend-evidence-link" class="g-linkbtn" data-chapter="g-trend-comparison-evidence">Evidence</button>';
   return '<section id="g-observed-trend-panel" class="g-chart-container-box g-daily-aht" aria-labelledby="g-observed-trend">'
-    +gSlideResult(gSlideTakeaway(narrative.takeaway,details),visual)+'</section>';
+    +gSlideResult(gSlideTakeaway(narrative.takeaway,details,{labels:narrative.labels}),visual)+'</section>';
 }
 function dailyGuidePages(R){
   const state=observedState(R), result=dailyEventSelection(R,state);
@@ -2488,6 +2906,47 @@ function dailyGuidePages(R){
     '<h4>Event comparison</h4>'+directions
       +'<p>Each arrow shows how much '+ml()+' differed on dates with the event type compared with the same weekdays without it. Longer arrows show larger gaps. A very short gap appears as a dot at the mean.</p>'
       +'<p>Hover over or focus an event point to see the date and its actual reading.</p>'];
+}
+function historicalGuideDial(R){
+  const chart=document.getElementById('g-baseline-daily-panel');
+  const visual=chart?.querySelector('.g-slide-visual');
+  const plot=visual?.querySelector('.dt-plot');
+  const width=plot?.clientWidth||(visual?visual.clientWidth-30:0);
+  const direction=width>0?dailyPlotLayout(baselineDailyResult(R),width,true,true,getComputedStyle(visual).fontFamily).direction:null;
+  const cue=direction?.dx>0?direction:null;
+  const preference=R.analysis_setup?.direction||R.metric?.direction;
+  const tone=label=>['higher_is_better','lower_is_better'].includes(preference)
+    ?(label==='rising')===(preference==='higher_is_better')?'emerald':'coral':'neutral';
+  const half=(label,base,sweep)=>{
+    const active=cue?.label===label;
+    const radius=!cue||cue.label==='level'?58:active?62:34;
+    return {label,active,shape:`M${64-radius} ${base} A${radius} ${radius} 0 0 ${sweep} ${64+radius} ${base} Z`};
+  };
+  const halves=[half('rising',63,1),half('falling',65,0)];
+  const selected=halves.find(part=>part.active);
+  const outline=selected?`<defs><clipPath id="historical-guide-outline"><path d="${selected.shape}"/></clipPath></defs>
+    <path class="g-historical-guide-outline" d="${selected.shape}" clip-path="url(#historical-guide-outline)"/>`:'';
+  const length=cue?Math.hypot(cue.dx,cue.dy):0;
+  const arrow=length?directionArrow('historical-guide-arrow',64,cue.label==='rising'?54:cue.label==='falling'?74:64,
+    47*cue.dx/length,47*cue.dy/length):'';
+  return '<svg class="g-historical-guide-dial" viewBox="0 0 128 128" role="img" aria-label="'
+    +esc(cue?'Illustrative direction · '+cue.label:'Fitted direction unavailable')+'">'
+    +halves.map(({label,shape})=>`<path data-tone="${tone(label)}" d="${shape}"/>`).join('')+outline+arrow+'</svg>';
+}
+function baselineDailyGuidePages(R){
+  const {fit,score,qualifies}=historicalFitFinding(R);
+  const band=(threshold,tone,copy,selected)=>'<div class="g-historical-guide-band" data-tone="'+tone+'"'
+    +(score!==null&&selected?' data-active aria-current="true"':'')+'><strong>'+threshold+'</strong><span>'+copy+'</span></div>';
+  const fitStatus=!fit?'No fitted trend is available.':score===null?'R² is unavailable for the fitted trend.'
+    :'The fitted trend '+(qualifies?'meets':'is below')+' the descriptive reporting cutoff of R² 0.50.';
+  return [
+    '<p>'+fitStatus+'</p><div class="g-historical-guide-bands">'
+      +band('&lt; 0.50','coral','Below the descriptive reporting cutoff',!qualifies)
+      +band('≥ 0.50','emerald','Meets the descriptive reporting cutoff',qualifies)
+      +'</div><p>A higher R² is favorable.</p>',
+    historicalGuideDial(R)+(fit?'<p><strong>Illustrative direction.</strong> The arrow extends the last fitted step. R² describes the historical fit. Forecasting and formal significance use separate checks.</p>'
+      :'<p>Fitted direction unavailable.</p>')
+  ];
 }
 function trendPreview(R,draft){
   var valid=draft.start&&draft.end&&draft.start>=R.scope.start&&draft.end<=R.scope.end&&draft.start<=draft.end;
@@ -2516,7 +2975,9 @@ function trendDraft(R){
     dailyDrivers:state.dailyDrivers??R.scope.contact_types,eventTypes:state.eventTypes??dailyEventTypes(R.calendar_events||[])};
 }
 var REPORT_CHART_CONTROLS={
-  baselineDaily:{id:"g-baseline-daily-panel",title:"Daily trend",view:"baselineDailyView",render:baselineDailyChart,evidence:baselineDailyEvidence},
+  baselineDaily:{id:"g-baseline-daily-panel",title:"Daily Trend",view:"baselineDailyView",render:baselineDailyChart,
+    editable:R=>observedState(R).baselineDailyView==='table',draft:baselineDailyDates,fields:baselineDailyFields,preview:baselineDailyPreview,
+    errors:baselineDailyDateErrors,inputs:{"g-baselineDailyStart":"baselineDailyStart","g-baselineDailyEnd":"baselineDailyEnd"},refresh:[]},
   stability:{id:"g-stability-panel",title:"Stability",view:"stabilityView",render:stabilityPanel,evidence:stabilityEvidence,
     views:R=>[["chart","Individuals"],...(R&&stabilitySelection(R).rangeSignals.length?[["moving-range","Moving Range"]]:[]),
       ["scale","Stability scale"],["out-of-control","Out-of-control points"]],
@@ -2539,19 +3000,23 @@ var REPORT_CHART_CONTROLS={
       return {daily_run:run,daily_window:{start,end,lines_of_business:dailyLines,contact_types:dailyDrivers}};
     },
     commit:(R,comparison,draft)=>Object.assign(observedState(R),draft,{eventComparison:comparison}),
+    afterReset:state=>{delete state.eventComparison;},
     refresh:["line","driver","eventType"],afterApply:(state,R)=>{
       if(hasRecordedEvents(R)&&state.trendView==="table"&&!dailyEventSelection(R,state).displayEvents.length)state.trendView="chart";
       hourlyTrendChanged(R);
     }},
   box:{id:"g-observed-comparison",title:"Group performance comparison",view:"boxView",render:gBreakdowns,evidence:R=>gReportGroups(R,true),
+    draft:R=>{const {peer,selected,dim}=boxSelection(R,observedState(R));return {boxMeasure:peer?.id||selected,distribution:dim};},
     fields:boxFilterFields,preview:boxPreview,inputs:{"g-box-measure":"boxMeasure","g-box-dimension":"distribution"},refresh:["boxMeasure"]},
   histogram:{id:"g-observed-histogram",title:"Distribution of agent performance",view:"histogramView",render:gHistogram,evidence:R=>gHistogram(R,true),
+    draft:R=>({histogram:histogramView(R.insights.agent_histogram,observedState(R)).key}),
     fields:histogramFilterFields,preview:histogramPreview,inputs:{"g-histogram-cohort":"histogram"},refresh:[]},
   hourly:{id:"g-hourly-heatmap",title:"Calendar heatmap",view:"hourlyView",render:gHourlyHeatmap,
     scope:R=>{var {selection,days}=R.hourly_heatmap;return {start:days[0],end:days.at(-1),
       lines_of_business:selection.line?[selection.line]:R.scope.lines_of_business,
       contact_types:selection.driver?[selection.driver]:R.scope.contact_types,group:selection.lead,shift:selection.shift};},
     fields:hourlyFilterFields,preview:hourlyPreview,draft:hourlyDraft,inputs:{"g-hourly-start":"start","g-hourly-lead":"lead","g-hourly-shift":"shift"},refresh:[],
+    filterResult:R=>R.hourly_heatmap,filterSources:()=>['D06'],afterReset:state=>{state.hourlyCockpitScope=true;},
     request:(R,draft)=>({hour_run:R.hourly_heatmap.comparison_key,hour_window:draft}),
     commit:(R,result)=>{R.hourly_heatmap=result;}},
   movement:{id:"g-component-movement",title:"Before and After component movement",view:"movementView",render:componentMovement,
@@ -2561,11 +3026,15 @@ var REPORT_CHART_CONTROLS={
     draft:R=>({...R.insights.component_movement.selection}),sync:syncMovementDates,inputs:{"g-movement-before-start":"before_start","g-movement-before-end":"before_end",
       "g-movement-after-start":"after_start","g-movement-after-end":"after_end","g-movement-group":"group"},refresh:[],
     request:(R,draft)=>({component_run:R.insights.component_movement.comparison_key,component_window:draft}),
+    filterResult:R=>R.insights.component_movement,
+    filterSources:R=>({csat:['D06','D03'],qa_score:['D06','D04']}[R.metric.metric_id]||['D06']),
     commit:(R,result)=>{R.insights.component_movement=result;},evidenceId:"g-component-movement-evidence"},
   agents:{id:"g-agent-heatmap",title:"Performance by agent and group",view:"agentHeatmapView",render:R=>gAgentHeatmap(R,true),
+    draft:R=>{const {group,set}=agentHeatmapSelection(R,observedState(R));return {agentHeatmapGroup:group.id,agentHeatmapMeasures:set};},
     fields:agentHeatmapFilterFields,preview:agentHeatmapPreview,inputs:{"g-agent-heatmap-group":"agentHeatmapGroup","g-agent-heatmap-measures":"agentHeatmapMeasures"},
     refresh:[],afterApply:state=>{state.agentHeatmapPage=1;}},
   gaps:{id:"g-factor-segments",title:"Adjusted group comparisons",view:"factorView",render:insSegments,evidence:R=>insSegments(R,true),
+    draft:R=>({factorDimension:factorSelection(R,observedState(R)).dim}),
     fields:factorFilterFields,preview:factorPreview,inputs:{"g-factor-dimension":"factorDimension"},refresh:[]},
   relationship:{id:"g-metric-relationships-card",title:"Weekly metric relationships",view:"relationshipView",render:metricRelationships},
   cart:{id:"g-cart-profiles",title:"Historical CART performance profiles",view:"cartView",render:cartProfiles},
@@ -2586,8 +3055,27 @@ var REPORT_CHART_CONTROLS={
     fields:requirementsFields,preview:requirementsPreview,sync:syncRequirementsDates,
     inputs:{"g-requirements-mode":"mode","g-requirements-start":"start","g-requirements-end":"end"},refresh:["mode"],
     request:(R,draft)=>({requirements_run:R.account_requirements.run,requirements_window:draft}),
+    filterResult:R=>R.account_requirements,
     commit:(R,result)=>{R.account_requirements=result;}}
 };
+function chartFilterDefaults(key,R){
+  const defaults=observedState(R).filterDefaults??={};
+  if(!defaults[key]){
+    const chart=REPORT_CHART_CONTROLS[key],result=chart.filterResult?.(R);
+    defaults[key]={result,selection:result?.selection||chart.draft(R)};
+  }
+  return defaults[key];
+}
+function chartHasFilterOverrides(key,R){
+  const chart=REPORT_CHART_CONTROLS[key];
+  if(!chart.fields)return false;
+  const saved=chartFilterDefaults(key,R);
+  const applied=chart.filterResult?.(R)?.selection||chart.draft(R);
+  return Object.entries(saved.selection).some(([field,value])=>{
+    const current=applied[field];
+    return Array.isArray(value)?current.length!==value.length||value.some(item=>!current.includes(item)):current!==value;
+  });
+}
 function reportViews(key,state){
   var chart=REPORT_CHART_CONTROLS[key],views=typeof chart.views==='function'?chart.views(xR()):chart.views||[["chart","Chart"],["table","Table"]];
   var index=Math.max(0,views.findIndex(view=>view[0]===state[chart.view]));
@@ -2597,12 +3085,15 @@ function reportViewButton(key,state){
   var {current:[,active],next:[,next]}=reportViews(key,state);
   return '<button type="button" class="btn secondary g-compact-chart-control" id="g-'+key+'-view" data-chart-view="'+key+'" aria-label="'+esc('Toggle view. Showing '+active+'. Switch to '+next)+'">Toggle view · '+esc(active)+'</button>';
 }
-function reportChartControls(key,state,showView=true){
+function chartLabelsShown(state,key){return state.labels?.[key]!==false;}
+function reportChartControls(key,state,showView=true,hasLabels=false){
   var chart=REPORT_CHART_CONTROLS[key],[,active]=reportViews(key,state).current;
   var label='Focus mode: '+reportChartTitle(chart)+', '+active;
   var icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';
   return '<button type="button" class="btn secondary g-compact-chart-control" id="g-'+key+'-explore" data-chart-explore="'+key+'" aria-haspopup="dialog" aria-expanded="false" aria-controls="g-chart-filter">Explore your data</button>'
+    +(chartHasFilterOverrides(key,xR())?'<button type="button" class="btn secondary g-compact-chart-control g-chart-reset" id="g-'+key+'-reset" data-chart-reset="'+key+'">'+gIcon('M3 12a9 9 0 1 1 2.6 6.4M3 5v7h7',14)+'Reset filters</button>':'')
     +(showView?reportViewButton(key,state):'')
+    +(hasLabels?'<button type="button" class="btn secondary g-compact-chart-control" id="g-'+key+'-labels" data-chart-labels="'+key+'" aria-label="Chart labels" aria-pressed="'+chartLabelsShown(state,key)+'">Chart labels · '+(chartLabelsShown(state,key)?'On':'Off')+'</button>':'')
     +'<button type="button" class="btn secondary g-focus-mode g-compact-chart-control" id="g-'+key+'-expand" data-chart-expand="'+key+'" aria-label="'+esc(label)+'"><span>Focus mode</span>'+icon+'</button>';
 }
 function reportChartTitle(chart){
@@ -2617,7 +3108,7 @@ function chartDialogHtml(modal){
 var chartFilter=null;
 function positionChartPopover(panel,trigger,beside=false){
   var anchor=trigger.getBoundingClientRect(),zoom=panel.currentCSSZoom||1,margin=8;
-  if(panel.classList.contains('dt-guide')){
+  if(panel.id==='guide-g-slide-recorded-events'){
     const bounds=panel.getBoundingClientRect(),right=anchor.right+8;
     panel.style.left=Math.max(12,right+bounds.width<=innerWidth-12?right:anchor.left-bounds.width-8)/zoom+'px';
     panel.style.top=Math.max(12,Math.min(anchor.top,innerHeight-bounds.height-12))/zoom+'px';
@@ -2642,6 +3133,7 @@ function positionChartPopover(panel,trigger,beside=false){
   var below=window.innerHeight-anchorBottom-margin*2,above=anchor.top-margin*2;
   var flip=naturalHeight>below&&above>below;
   var space=Math.max(0,flip?above:below);
+  if(panel.matches('.g-historical-explore,#guide-g-slide-daily'))space=Math.min(space,innerHeight-24);
   panel.style.maxHeight=space/zoom+'px';
   panel.style.top=(flip?Math.max(margin,anchor.top-panel.getBoundingClientRect().height-margin):anchorBottom+margin)/zoom+'px';
   panel.style.left=Math.max(margin,Math.min(beside?anchor.right-bounds.width:anchor.left,window.innerWidth-bounds.width-margin))/zoom+'px';
@@ -2676,35 +3168,37 @@ function openChartFilter(trigger,key,chart,result){
   closeChartFilter();
   var guide=document.querySelector(".g-guide.is-open");
   if(guide)gSetGuide(guide,false);
-  var state=observedState(result),draft=chart.draft?chart.draft(result):Object.fromEntries(Object.values(chart.inputs||{}).map(field=>[field,state[field]]));
-  var daily=key==="trend"&&hasRecordedEvents(result);
+  var draft=chart.draft?.(result);
+  var historical=key==="baselineDaily",daily=key==="trend"&&hasRecordedEvents(result),scrollFilter=daily||historical;
   var panel=document.createElement("section");
   panel.id="g-chart-filter";
-  panel.className="g-chart-popover g-filter-popover"+(daily?' g-filter-popover--multi':'');
+  panel.className="g-chart-popover g-filter-popover"+(daily?' g-filter-popover--multi':'')+(historical?' g-historical-explore':'');
   panel.setAttribute("popover","manual");
   panel.setAttribute("role","dialog");
   panel.setAttribute("aria-label","Explore your data");
   chartFilter={chart,key,result,draft,panel,trigger};
   var scope=chartAppliedScope(chart,result);
-  if(chart.fields){
+  if(chart.fields&&chart.editable?.(result)!==false){
     var preview=chart.preview(result,draft);
     var compact=daily?' g-compact-chart-control':'';
     var actions='<div class="g-chart-filter-actions"><button type="button" class="btn secondary'+compact+'" id="g-trend-cancel">Cancel</button>'
       +'<button type="submit" class="btn'+compact+'" id="g-trend-apply"'+(preview.valid?'':' disabled')+'>Apply</button></div>';
     var heading=daily?'<div class="g-daily-explore-heading"><h4 tabindex="-1">Explore your data</h4>'+actions+'</div>':'';
-    panel.innerHTML=(daily?'':scope)+'<form id="g-trend-filter-form">'+heading
-    +(daily?'<div class="g-filter-scroll" role="region" aria-label="Filter options" tabindex="0">'+scope:'')
+    panel.innerHTML=(scrollFilter?'':scope)+'<form id="g-trend-filter-form">'+heading
+    +(scrollFilter?'<div class="g-filter-scroll" role="region" aria-label="Filter options" tabindex="0">'+scope:'')
     +'<div class="g-trend-fields'+(daily?' g-daily-fields':'')+'">'+chartDialogFields(chartFilter)+'</div>'
     +'<aside class="g-trend-preview"><h4>Selection preview</h4><p id="g-trend-preview" role="status">'+esc(preview.text)+'</p>'
-    +'<div id="g-trend-preview-detail">'+(preview.html||'')+'</div></aside>'+(daily?'</div>':'')
+    +'<div id="g-trend-preview-detail">'+(preview.html||'')+'</div></aside>'+(scrollFilter?'</div>':'')
     +(daily?'':actions)+'</form>';
-  }else panel.innerHTML=scope+'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Close</button></div>';
+  }else panel.innerHTML=(historical?'<div class="g-filter-scroll">'+scope+'</div>':scope)
+    +'<div class="g-chart-filter-actions"><button type="button" class="btn secondary" id="g-trend-cancel">Close</button></div>';
+  if(historical)panel.insertAdjacentHTML('afterbegin','<h4 class="g-historical-explore-heading" tabindex="-1">Explore your data</h4>');
   trigger.after(panel);
   trigger.setAttribute("aria-expanded","true");
   panel.showPopover();
   chart.sync?.(chartFilter);
   positionChartPopover(panel,trigger);
-  (panel.querySelector(".g-daily-explore-heading h4")||panel.querySelector("input:not(:disabled),select:not(:disabled)")||panel.querySelector("button")).focus({preventScroll:true});
+  (panel.querySelector(".g-daily-explore-heading h4,.g-historical-explore-heading")||panel.querySelector("input:not(:disabled),select:not(:disabled)")||panel.querySelector("button")).focus({preventScroll:true});
 }
 function openChartDialog(trigger){
   var key=trigger.dataset.chartExpand||trigger.dataset.chartExplore,chart=REPORT_CHART_CONTROLS[key];
@@ -2718,7 +3212,12 @@ function openChartDialog(trigger){
   var placeholder=document.createElement('div');
   placeholder.style.height=card.offsetHeight+'px';
   var toolbar=trigger.closest(".g-slide-toolbar");
-  var toolbarPlaceholder;
+  var slide=card.closest('.g-question-slide'), toolbarPlaceholder, guidePlaceholder;
+  var focusGuide=key==='baselineDaily'?slide?.querySelector('.g-guide'):null;
+  if(focusGuide){
+    guidePlaceholder=document.createComment('Threshold Guide');
+    focusGuide.before(guidePlaceholder);
+  }
   if(card.classList.contains('g-daily-aht')){
     placeholder.className='g-daily-focus-origin';
     if(toolbar){
@@ -2728,10 +3227,11 @@ function openChartDialog(trigger){
       toolbarPlaceholder.querySelectorAll('[id]').forEach(control=>control.removeAttribute('id'));
       toolbar.before(toolbarPlaceholder);
     }
-    gMarkInsightsNav('g-slide-recorded-events');
+    if(slide)gMarkInsightsNav(slide.id);
   }
   card.replaceWith(placeholder);
-  S.modal={chartMode:"focus",chart,result:R,card,toolbar,toolbarPlaceholder,placeholder,from:trigger.id,top:window.scrollY};
+  S.modal={chartMode:"focus",chart,result:R,card,toolbar,toolbarPlaceholder,placeholder,
+    guide:focusGuide,guidePlaceholder,slide,from:trigger.id,top:window.scrollY};
   retainFocusedTakeaway(S.modal);
   renderModal();setModalBackground();
   sizeChartTables();
@@ -2741,6 +3241,10 @@ function closeChartDialog(){
   var modal=S.modal;
   if(!modal?.chartMode)return;
   closeChartFilter();
+  if(modal.guide){
+    if(modal.guide.classList.contains('is-open'))gSetGuide(modal.guide,false);
+    modal.guidePlaceholder.replaceWith(modal.guide);
+  }
   var slide=modal.placeholder.closest(".g-question-slide");
   var header=slide?.querySelector(".g-slide-heading");
   if(modal.toolbarPlaceholder?.isConnected)modal.toolbarPlaceholder.replaceWith(modal.toolbar);
@@ -2759,6 +3263,10 @@ function refreshChartPreview(modal){
   document.getElementById('g-trend-preview').textContent=preview.text;
   document.getElementById('g-trend-preview-detail').innerHTML=preview.html||'';
   document.getElementById('g-trend-apply').disabled=!preview.valid;
+  if(modal.chart.errors){
+    for(const [field,invalid] of Object.entries(modal.chart.errors(modal.result,modal.draft)))
+      modal.panel.querySelector('#g-'+field).setAttribute('aria-invalid',String(invalid));
+  }
   positionChartPopover(modal.panel,modal.trigger);
 }
 function readDailyChoices(control){
@@ -2821,15 +3329,57 @@ document.addEventListener("submit",async function(e){
       if(chartFilter===modal){fields.forEach(field=>field.disabled=false);apply.disabled=false;}
     }
   }else Object.assign(state,modal.draft);
-  closeChartFilter(true);
-  chart.afterApply?.(state,R);
-  redrawObservedChart(chart.id,chart.render(R));
-  updateChartEvidence(modal.key,R);
+   const evidence=modal.trigger.closest('#g-report-evidence');
+   closeChartFilter(true);
+   refreshChartSelection(modal.key,R);
+   if(evidence)focusChartExplore(modal.key,evidence);
 });
+function focusChartExplore(key,evidence){
+  const id='g-'+key+'-explore';
+  (evidence?evidence.querySelector('#'+id):document.getElementById(id))?.focus({preventScroll:true});
+}
+function refreshChartSelection(key,R){
+  const chart=REPORT_CHART_CONTROLS[key];
+  chart.afterApply?.(observedState(R),R);
+  redrawObservedChart(chart.id,chart.render(R));
+  updateChartEvidence(key,R);
+}
+function resetChartFilters(trigger){
+  const key=trigger.dataset.chartReset,R=xR();
+  if(!R||!chartHasFilterOverrides(key,R))return;
+  const chart=REPORT_CHART_CONTROLS[key],state=observedState(R),baseline=chartFilterDefaults(key,R);
+  const evidence=trigger.closest('#g-report-evidence');
+  if(chart.filterSources&&state.resultRequest){
+    const before=JSON.parse(state.resultRequest).optional_uploads||{},current=optionalUploadIds();
+    if(chart.filterSources(R).some(source=>before[source]!==current[source])){
+      let status=trigger.nextElementSibling;
+      if(!status?.classList.contains('g-chart-reset-status')){
+        status=document.createElement('span');
+        status.className='g-chart-reset-status muted';
+        status.setAttribute('role','status');
+        trigger.after(status);
+      }
+      status.textContent='A source changed. Run the analysis again to reset these filters.';
+      return;
+    }
+  }
+  closeChartFilter();
+  if(baseline.result)chart.commit(R,baseline.result);
+  else Object.assign(state,baseline.selection);
+  chart.afterReset?.(state);
+  refreshChartSelection(key,R);
+  focusChartExplore(key,evidence);
+  document.getElementById('live').textContent='Cockpit scope restored for '+reportChartTitle(chart)+'.';
+}
 function updateChartEvidence(key,R){
   var chart=REPORT_CHART_CONTROLS[key];
   var id=key==="trend"&&hasRecordedEvents(R)?"g-recorded-events-evidence":chart.evidenceId||"g-"+key+"-evidence";
   var evidence=document.getElementById(id);
+  var chartCopy=evidence?.querySelector('#'+chart.id);
+  if(chartCopy){
+    if(chartCopy!==document.getElementById(chart.id))chartCopy.outerHTML=chart.render(R);
+    return;
+  }
   if(evidence&&chart.evidence){
     if(chart.evidenceId)evidence.outerHTML=chart.evidence(R);
     else evidence.innerHTML=chart.evidence(R);
@@ -2883,6 +3433,7 @@ function hourlyDraft(R){
 }
 function hourlyTrendScope(R){
   const state=observedState(R);
+  if(state.hourlyCockpitScope)return {start:R.scope.start,end:R.scope.end,line:'',driver:''};
   if(!hasRecordedEvents(R))return state;
   const {lines,drivers}=dailyWorkFilters(R,state);
   if(lines?.length>1||drivers?.length>1)return null;
@@ -2943,20 +3494,21 @@ function gHourlyHeatmap(R,evidence=false){
       if(cell.value===null)return '<td title="Hourly totals exceed the supported numeric range.">Unavailable<small>n = '+n0(cell.count)+'</small></td>';
       var tone=colors?.neutral?' style="--heat-color:color-mix(in srgb,var(--aegean-600) '+Math.round(10+36*colors.score(cell.value))+'%,var(--surface))"':heatmapTint(colors,cell.value);
       var exact=String(cell.value/durationFactor())+' '+durationUnitSymbol()+' · '+n0(cell.count)+' observations';
-      return '<td'+tone+' title="'+esc(exact)+'" aria-label="'+esc(exact)+'">'+esc(durationNumber(cell.value,false))+'<small>n = '+n0(cell.count)+'</small></td>';
+      return '<td'+tone+' title="'+esc(exact)+'" aria-label="'+esc(exact)+'">'+esc(chartNumber(cell.value))+'<small>n = '+n0(cell.count)+'</small></td>';
     }).join('')+'</tr>';
   }).join('');
-  var grid='<div class="scroll"><table class="g-hourly-grid"><caption>'+esc(ML()+' ('+durationUnitName(true)+') and eligible observations by local hour and date')+'</caption>'
+  var grid='<div class="scroll"><table class="g-hourly-grid"><caption>'+esc(ML()+' and eligible observations by local hour and date')+'</caption>'
     +'<thead><tr><th scope="col">Local hour</th>'+map.days.map(day=>'<th scope="col">'+esc(day)+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
   return '<section id="g-hourly-heatmap" class="g-chart-container-box" aria-labelledby="g-hourly-title">'+heading+scope
     +'<p>Primary contact occurrence time in '+esc(map.zone)+'. Explore shows up to seven dates. Repeated clock hours share a cell.</p>'
     +'<div class="g-observed-filters">'+reportChartControls("hourly",state)+'</div>'
     +'<p class="muted" id="g-hourly-status" role="status">'+hourlyScopeNotice(map,R)+'</p>'
     +'<p>'+esc(map.days[0]+' to '+map.days.at(-1)+' · '+applied.join(' · '))+'</p>'
-    +gSlideResult(takeaway,state.hourlyView==="table"?hourlyResultsTable(map):'<p class="muted">'+(colors?'<span class="g-hourly-key'+(colors.neutral?' is-neutral':'')+'" aria-hidden="true"></span>'+esc(colors.label):'Color references are unavailable for this scope.')+' A dash marks no eligible observations.</p>'+grid)
+    +gSlideResult(takeaway,state.hourlyView==="table"?hourlyResultsTable(map):'<p class="g-hourly-legend">'+(colors?'<span class="g-hourly-key'+(colors.neutral?' is-neutral':'')+'" aria-hidden="true"></span>'+esc(colors.label):'Color references are unavailable for this scope.')+' A dash marks no eligible observations.</p>'+grid)
     +'</section>';
 }
 function hourlyTrendChanged(R){
+  delete observedState(R).hourlyCockpitScope;
   var status=document.getElementById('g-hourly-status');
   if(status)status.textContent=hourlyScopeNotice(R.hourly_heatmap,R);
 }
@@ -2981,7 +3533,7 @@ function syncSlideSubtitle(slide){
 }
 function collectSlideControls(source,toolbar){
   var selectors=[...source.querySelectorAll('select[data-observed-chart]')].map(select=>select.closest('[data-chart-selection]')||select.closest('label')||select);
-  var groups=['[data-chart-explore]','[data-chart-view]','[data-chart-expand]'];
+  var groups=['[data-chart-explore]','[data-chart-reset]','[data-chart-view]','[data-chart-labels]','[data-chart-expand]'];
   toolbar.replaceChildren(...new Set([...selectors,...groups.flatMap(group=>[...source.querySelectorAll(group)])]));
   for(var wrapper of source.querySelectorAll('.g-observed-filters')){
     if(!wrapper.children.length)wrapper.remove();
@@ -3005,10 +3557,50 @@ function gNextSteps(categories,action){
   const items=[...new Set(categories)].map(label=>({label}));
   return '<h4>Next steps</h4><ul class="g-takeaway-next-steps">'+takeawayListItem({text:action,items})+'</ul>';
 }
-function gSlideTakeaway(message,details='',id=''){
+const takeawayNumberFormat=new Intl.NumberFormat('en-US',{maximumFractionDigits:2});
+function roundTakeawayQuantity(text){
+  return text.replace(/([+−–-]?)(\d[\d,]*\.\d{3,})(e[+−-]?\d+)?/gi,(match,sign,decimal,exponent)=>{
+    const magnitude=Number((decimal+(exponent||'')).replaceAll(',','').replace('−','-'));
+    if(!Number.isFinite(magnitude))return match;
+    // Keep a nonzero reading distinguishable from an evaluated zero.
+    const formatted=exponent||(magnitude>0&&magnitude<0.005)?magnitude.toExponential(2):takeawayNumberFormat.format(magnitude);
+    return (magnitude===0?'':sign)+formatted;
+  });
+}
+function emphasizeTakeaway(content,labels){
+  const metrics=Object.values(S.cfg?.metrics||{}).map(metric=>metric.label);
+  const terms=[...new Set([...labels,...metrics,ML(),'AHT','CSAT','QA','FCR','Operating hours','Target','Lower limit','Upper limit',
+    'Specification limits','Target yield','Specification yield','Sigma level','VSF','Moving Range','Individuals','Median',
+    'Lines of Business','Contact drivers','Adoption rate','Highest-ranked','Lowest-ranked'].filter(Boolean))];
+  const names=terms.sort((a,b)=>b.length-a.length).map(term=>term.replace(/[.*+?^$(){}|[\]\\]/g,'\\$&')).join('|');
+  const measurement=String.raw`[+−–-]?\d+(?:[,.]\d+)*(?:e[+−-]?\d+)?(?:\s*(?:%|(?:(?:percentage |rating )?points?|pp|pts?|sec(?:onds?)?|mins?|minutes?|hrs?|hours?|sigma|contacts?|agents?|weeks?|days?|observations?|surveys?|evaluations?)\b))?`;
+  const value=String.raw`\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|(?<quantity>${measurement}(?:\s+(?:to|through)\s+${measurement})?)`;
+  const pattern=new RegExp('(?<![\\p{L}\\p{N}_])(?:'+names+'|(?<value>'+value+'))(?![\\p{L}\\p{N}_])','giu');
+  const walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT);
+  const nodes=[];
+  while(walker.nextNode())nodes.push(walker.currentNode);
+  for(const node of nodes){
+    if(node.parentElement?.closest('strong,b,a,button,h4,[aria-hidden=true]'))continue;
+    const matches=[...node.data.matchAll(pattern)];
+    if(!matches.length)continue;
+    const parts=document.createDocumentFragment();
+    let end=0;
+    for(const match of matches){
+      parts.append(node.data.slice(end,match.index));
+      const term=document.createElement('strong');
+      if(match.groups.value)term.className='g-takeaway-value';
+      term.textContent=match.groups.quantity?roundTakeawayQuantity(match[0]):match[0];
+      parts.append(term);
+      end=match.index+match[0].length;
+    }
+    parts.append(node.data.slice(end));
+    node.replaceWith(parts);
+  }
+}
+function gSlideTakeaway(message,details='',{id='',labels=[],title='Takeaway'}={}){
   var answers=Array.isArray(message)?message:[message];
   var template=document.createElement('template');
-  template.innerHTML=details;
+  template.innerHTML='<ul class="g-takeaway-answer">'+answers.map(item=>takeawayListItem(item,' data-takeaway-answer')).join('')+'</ul>'+details;
   for(var heading of [...template.content.children]){
     if(!heading.matches('h4')||heading.textContent!=='Facts')continue;
     var list=document.createElement('ul');
@@ -3032,9 +3624,8 @@ function gSlideTakeaway(message,details='',id=''){
     }
     if(!list.children.length){list.remove();heading.remove();}
   }
-  return '<aside class="g-slide-takeaway" aria-label="Takeaway"'+(id?' id="'+esc(id)+'"':'')+'><h4>Takeaway</h4>'
-    +'<ul class="g-takeaway-answer">'+answers.map(item=>takeawayListItem(item,' data-takeaway-answer')).join('')+'</ul>'
-    +template.innerHTML+'</aside>';
+  emphasizeTakeaway(template.content,labels);
+  return '<aside class="g-slide-takeaway" aria-label="'+esc(title)+'"'+(id?' id="'+esc(id)+'"':'')+'><h4>'+esc(title)+'</h4>'+template.innerHTML+'</aside>';
 }
 function gTakeawayMeaning(message){
   return '<p class="g-takeaway-meaning"><span aria-hidden="true">↪</span> '+esc(message)+'</p>';
@@ -3047,7 +3638,7 @@ var INSIGHT_GUIDES={
   "g-slide-stability":["Run charts"],
   "g-slide-score-cutoff":["Observation score cutoff"],
   "g-slide-recorded-events":["Event comparison"],
-  "g-slide-daily":["Daily movement", [["Below 0","Fell"],["0","Unchanged"],["Above 0","Rose"]],"Change compares the last and first eligible days in the applied selection."],
+  "g-slide-daily":["Historical daily trend"],
   "g-slide-hourly":["Highest eligible hour",[["Below 10","Below takeaway minimum"],["10 or more","Eligible for the takeaway"]],"The highest finite KPI and exact ties are highlighted among qualifying hours. Lower-count cells remain visible."],
   "g-slide-volume":["Busiest dates",[["Ranks 1–5","Most handled contacts"]],"Count ranks describe workload in the selected scope. Equal counts are ordered by date."],
   "g-slide-groups":["Group medians and spread",[["4 or more agents","Box plot available"],["Outside 1.5 × IQR fences","Outside the ordinary fence"]],"Where the direction or applicable interval supports ranking, the most and least favorable observed medians are highlighted. Tied ranks are shared."],
@@ -3073,7 +3664,6 @@ function gGuideControl(id,question){
   if(!Object.hasOwn(INSIGHT_GUIDES,id))return '';
   var R=xR();
   if(id==="g-slide-requirements"&&!R?.account_requirements&&!R?.target_assessment?.periods?.some(p=>typeof p.target_met==="boolean"))return '';
-  if(id==="g-slide-daily"&&hasRecordedEvents(R))return '';
   if(id==="g-slide-hourly"&&!R?.hourly_heatmap)return '';
   if(id==="g-slide-scenario"&&(!R?.insights?.scenario||R.insights.scenario.blocked||!R.insights.constraints))return '';
   if(id==="g-slide-actions"&&!R?.insights?.cards?.length)return '';
@@ -3100,12 +3690,6 @@ function gGuideContent(slide,R){
       ranges=[["Score < "+cutoff.cutoff,"Below the score cutoff"],["Score ≥ "+cutoff.cutoff,"Qualifies"]];
       note='This is the observation score cutoff. Any target for the pooled share has its own assessment.';
     }
-  }else if(id==="g-slide-daily"){
-    var view=trendSelection(R,state).view;
-    var days=view.by_day.filter(day=>Number.isFinite(day.value)).sort((a,b)=>a.key.localeCompare(b.key));
-    if(days.length>1)active=1+Math.sign(days.at(-1).value-days[0].value);
-    result='Applied dates '+state.start+' to '+state.end+'. '+n0(days.length)+' dates with eligible values.';
-    if(direction==="lower_is_better"||direction==="higher_is_better")note+=' '+(direction==="lower_is_better"?'Lower':'Higher')+' KPI values are favorable.';
   }else if(id==="g-slide-hourly"&&R.hourly_heatmap){
     var map=R.hourly_heatmap,colors=hourlyColors(R,map);
     note+=' '+(colors?colors.label:'Color references are unavailable for this scope.');
@@ -3179,17 +3763,20 @@ function gGuideContent(slide,R){
     +(ranges?.length?'<dl class="g-guide-ranges">'+ranges.map(([range,label,tone],i)=>'<div class="'+(tone?'g-guide-'+tone:'')+(i===active?' g-guide-active':'')+'"><dt>'+esc(range)+'</dt><dd>'+esc(label)+(i===active?' · Applied':'')+'</dd></div>').join("")+'</dl>':'')
     +(note?'<p>'+esc(note)+'</p>':'')+(result||scope?'<p><strong>Applied result</strong> '+esc(result||scope)+'</p>':'');
 }
+function gGuideSlide(guide){
+  return guide.closest(".g-question-slide")||(S.modal?.guide===guide?S.modal.slide:null);
+}
 function gSetGuide(guide,open,focus=false){
-  var toggle=guide.firstElementChild,panel=guide.lastElementChild,slide=guide.closest(".g-question-slide");
-  var daily=slide.id==="g-slide-recorded-events";
+  var toggle=guide.firstElementChild,panel=guide.lastElementChild,slide=gGuideSlide(guide);
+  var daily=slide.id==="g-slide-recorded-events",historical=slide.id==="g-slide-daily";
   guide.classList.toggle("is-open",open);
   toggle.setAttribute("aria-expanded",String(open));
   toggle.setAttribute("aria-label",(open?"Close":"Open")+" threshold guide for "+slide.querySelector(".g-slide-question").textContent);
-  toggle.innerHTML=open?'<span aria-hidden="true">×</span>':GUIDE_BOOK;
+  toggle.innerHTML=open?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>':GUIDE_BOOK;
   if(open){
     closeChartFilter();
-    panel.classList.toggle('dt-guide',daily);
-    if(daily){panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Threshold Guide');}
+    panel.classList.toggle('dt-guide',daily||historical);
+    if(daily||historical){panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Threshold Guide');}
     guide.dataset.page=daily&&observedState(xR()).trendView==="comparison"?"1":"0";
     gRenderGuide(guide,slide);
     panel.showPopover();
@@ -3200,17 +3787,18 @@ function gSetGuide(guide,open,focus=false){
 function gRenderGuide(guide,slide){
   var panel=guide.lastElementChild,index=Number(guide.dataset.page);
   var body=panel.classList.contains('dt-guide');
-  var R=xR(),pages=slide.id==="g-slide-requirements"&&R?.account_requirements
+  var historical=slide.id==="g-slide-daily", R=xR(),pages=slide.id==="g-slide-requirements"&&R?.account_requirements
     ?requirementsGuidePages(R):slide.id==="g-slide-stability"?stabilityGuidePages(R)
-      :slide.id==="g-slide-recorded-events"?dailyGuidePages(R):[gGuideContent(slide,R)];
+      :slide.id==="g-slide-recorded-events"?dailyGuidePages(R):historical?baselineDailyGuidePages(R):[gGuideContent(slide,R)];
   index=Math.min(index,pages.length-1);
   guide.dataset.page=String(index);
+  var content=historical?pages.map((page,i)=>'<div'+(i===index?'':' inert aria-hidden="true"')+'>'+page+'</div>').join(''):pages[index];
   panel.innerHTML='<div class="g-guide-heading"><h4 tabindex="-1">Threshold Guide</h4></div>'
-    +(body?'<div class="dt-guide-body">'+pages[index]+'</div>':pages[index])+(pages.length>1?'<div class="g-guide-pages"><button type="button" class="btn secondary" data-guide-page="'+((index+pages.length-1)%pages.length)+'" aria-label="Previous guide">'+gChevron(-1,16)+'</button><span aria-live="polite">'+(index+1)+' of '+pages.length+'</span><button type="button" class="btn secondary" data-guide-page="'+((index+1)%pages.length)+'" aria-label="Next guide">'+gChevron(1,16)+'</button></div>':'');
+    +(body?'<div class="dt-guide-body">'+content+'</div>':content)+(pages.length>1?'<div class="g-guide-pages"><button type="button" class="btn secondary" data-guide-page="'+((index+pages.length-1)%pages.length)+'" aria-label="Previous guide">'+gChevron(-1,16)+'</button><span aria-live="polite">'+(index+1)+' of '+pages.length+'</span><button type="button" class="btn secondary" data-guide-page="'+((index+1)%pages.length)+'" aria-label="Next guide">'+gChevron(1,16)+'</button></div>':'');
 }
 function gRefreshGuide(){
-  var guide=document.querySelector("#g-report-presentation .g-guide.is-open");
-  if(guide)gRenderGuide(guide,guide.closest(".g-question-slide"));
+  var guide=document.querySelector(".g-guide.is-open");
+  if(guide)gRenderGuide(guide,gGuideSlide(guide));
 }
 function gCloseGuideOutsideView(dock){
   var guide=document.querySelector("#g-report-presentation .g-guide.is-open");
@@ -3291,8 +3879,9 @@ function gContactPerformance(R,evidence=false){
   var low=Math.min(...rows.map(row=>row.value)),maxValue=Math.max(...rows.map(row=>row.value));
   var min=Math.min(...values),high=Math.max(...values),pad=Math.max((high-min)*0.08,metricKind()==="points"?.05:1);
   var lo=min-pad,hi=high+pad;
-  var x=n=>72+604*n/max,y=v=>214-194*(v-lo)/(hi-lo);
-  var plotLegend=references.map(([value,style,label])=>[style,label+' '+fcValue(value)]);
+  var right=720-Math.max(44,horizontalTargetGutter(target,' '+durationUnitSymbol()));
+  var x=n=>72+(right-72)*n/max,y=v=>214-194*(v-lo)/(hi-lo);
+  var plotLegend=references.map(([value,style,label])=>[style,label==='Target'?label:label+' '+chartNumber(value)+' '+durationUnitSymbol()]);
   var points=[[],[]],highlights=new Set();
   for(var row of rows){
     var result=impactByType.get(row.key),value=result?.impact;
@@ -3313,8 +3902,9 @@ function gContactPerformance(R,evidence=false){
   if(highlights.has('favorable'))plotLegend.push(['impact-favorable','Favorable weighted offsets']);
   var graph=(plotLegend.length?chartLegend(plotLegend):'')
     +'<svg class="g-chart" viewBox="0 0 720 260" role="img" aria-label="Handled contacts versus '+esc(ml())+' by contact type">'
-    +[0,.25,.5,.75,1].map(f=>{var v=lo+(hi-lo)*f;return '<line class="gc-grid" x1="72" x2="676" y1="'+y(v)+'" y2="'+y(v)+'"/><text x="64" y="'+(y(v)+4)+'" text-anchor="end">'+esc(durationNumber(v,true))+'</text><text x="'+x(max*f)+'" y="234" text-anchor="middle">'+n0(max*f)+'</text>';}).join('')
-    +references.map(([value,,,className])=>'<line class="'+className+'" x1="72" x2="676" y1="'+y(value)+'" y2="'+y(value)+'"/>').join('')
+    +[0,.25,.5,.75,1].map(f=>{var v=lo+(hi-lo)*f;return '<line class="gc-grid" x1="72" x2="'+right+'" y1="'+y(v)+'" y2="'+y(v)+'"/><text x="64" y="'+(y(v)+4)+'" text-anchor="end">'+esc(chartNumber(v))+'</text><text x="'+x(max*f)+'" y="234" text-anchor="middle">'+n0(max*f)+'</text>';}).join('')
+    +references.map(([value,,,className])=>'<line class="'+className+'" x1="72" x2="'+right+'" y1="'+y(value)+'" y2="'+y(value)+'"/>').join('')
+    +(Number.isFinite(target)?horizontalTargetTag(target,right,y(target),right,' '+durationUnitSymbol()):'')
     +points.flat().join('')
     +(low===maxValue?'':rows.filter(row=>row.value===low||row.value===maxValue).map(row=>{
       var at=x(row.count),end=at>510;
@@ -3329,7 +3919,7 @@ function gContactPerformance(R,evidence=false){
   var state=observedState(R);
   return '<section id="g-contact-performance" class="g-chart-container-box"><div class="g-observed-filters">'+reportChartControls("contact",state)+'</div>'
     +gSlideResult(gSlideTakeaway(takeaway,'<h4>Facts</h4><p>'+esc(tied.map(row=>row.key).join(', ')+' had the highest volume at '+n0(top.count)+' handled contacts'+(tied.length>1?' each':'')+'.')+'</p>'
-      +gNextSteps(priority.map(row=>row.key),'Review handled volume and the unfavorable weighted gap for each contact type.')),
+      +gNextSteps(priority.map(row=>row.key),'Review handled volume and the unfavorable weighted gap for each contact type.'),{labels:rows.map(row=>row.key)}),
       '<h4>Contact type volume versus '+esc(ml())+'</h4>'+(state.contactView==="table"?table:graph)
       +(requirementsShown?'':'<p class="muted">No single requirement is shown for this comparison. See applicable requirements by contact type in the table.</p>'))
     +'<button type="button" class="g-linkbtn" data-chapter="g-contact-evidence">See contact type results in Evidence</button></section>';
@@ -3455,7 +4045,7 @@ function showReadingDetail(mark,event){
   var tip=document.createElement('span'),anchor=(chip||mark).getBoundingClientRect();
   tip.className='g-reading-detail';
   if(plot||mark.matches('.dt-gap-point'))tip.setAttribute('data-daily-detail','');
-  tip.textContent=(event.type==='pointerover'&&mark.dataset.readingPointer)||mark.dataset.readingDetail;
+  tip.textContent=(event.type==='pointerover'&&(mark.historicalPointerDetail?.(event)||mark.dataset.readingPointer))||mark.dataset.readingDetail;
   tip.setAttribute('aria-hidden','true');
   tip.setAttribute('popover','manual');
   (plot||mark).after(tip);
@@ -3469,6 +4059,14 @@ function showReadingDetail(mark,event){
   var left=Math.max(0,container?.left??0),right=Math.min(innerWidth,container?.right??innerWidth);
   var top=Math.max(0,container?.top??0),bottom=Math.min(innerHeight,container?.bottom??innerHeight);
   var zoom=tip.currentCSSZoom||1;
+  if(plot?.hasAttribute('data-historical-daily')){
+    tip.historicalMark=mark;
+    const pointer=event.type==='pointerover';
+    const anchorX=pointer?x+12:x-width/2;
+    const anchorY=pointer?y+12:y+6;
+    positionHistoricalReading(tip,{anchorX,anchorY,flipY:pointer?y-12:anchor.top-6,left,right,top,bottom});
+    return;
+  }
   if(plot||mark.matches('.dt-gap-point')){
     const beside=anchor.right+6+width<=right-8?anchor.right+6:anchor.left-6-width;
     const fits=chip&&beside>=left+8;
@@ -3481,6 +4079,20 @@ function showReadingDetail(mark,event){
   tip.style.left=Math.max(left+8,Math.min(x+12,right-width-8))/zoom+'px';
   tip.style.top=Math.max(top+8,y+12+height<=bottom?y+12:Math.min(anchor.top,y)-height-8)/zoom+'px';
 }
+function positionHistoricalReading(tip,{anchorX,anchorY,flipY,left,right,top,bottom}){
+  const {width,height}=tip.getBoundingClientRect(), zoom=tip.currentCSSZoom||1;
+  tip.style.left=Math.max(left+8,Math.min(anchorX,right-width-8))/zoom+'px';
+  tip.style.top=Math.max(top+8,Math.min(anchorY+height<=bottom-8?anchorY:flipY-height,bottom-height-8))/zoom+'px';
+}
+document.addEventListener('pointermove',event=>{
+  const mark=readingDetail?.historicalMark;
+  if(!mark?.contains(event.target)||event.pointerType==='touch')return;
+  if(mark.historicalPointerDetail)readingDetail.textContent=mark.historicalPointerDetail(event);
+  const pane=mark.closest('.g-modal-scroll-pane')?.getBoundingClientRect();
+  positionHistoricalReading(readingDetail,{anchorX:event.clientX+12,anchorY:event.clientY+12,flipY:event.clientY-12,
+    left:Math.max(0,pane?.left??0),right:Math.min(innerWidth,pane?.right??innerWidth),
+    top:Math.max(0,pane?.top??0),bottom:Math.min(innerHeight,pane?.bottom??innerHeight)});
+},{passive:true});
 for(var name of ['pointerover','focusin','pointerout','focusout']){
   document.addEventListener(name,event=>{
     var mark=event.target.closest?.('[data-reading-detail]');
@@ -3534,7 +4146,7 @@ function requirementDirection(period,low,high,pos){
   var stops=band.map(part=>part.color+' '+relative(part.from)+' '+relative(part.to));
   return {chart,key:'<i class="g-requirement-arrow-key" aria-hidden="true" style="background:linear-gradient(90deg,'+stops.join(',')+')"></i>'};
 }
-function requirementsGraphic(periods,weighted,direction){
+function requirementsGraphic(periods,weighted,direction,showLabels=true){
   var rows=(periods.length?periods:[{value:weighted.value}]).filter(p=>Number.isFinite(p.value));
   var refs=rows.flatMap(p=>[p.value,p.target,p.specification?.lower,p.specification?.upper]).filter(Number.isFinite);
   if(!refs.length)return '<p>No eligible results for the selected dates.</p>';
@@ -3543,13 +4155,12 @@ function requirementsGraphic(periods,weighted,direction){
   var pos=value=>100*((value-low)/(high-low));
   var factor=durationFactor(),rough=(high-low)/6/factor,scale=10**Math.floor(Math.log10(rough));
   var step=[1,2,5,10].find(multiplier=>multiplier*scale>=rough)*scale*factor;
-  var ticks='';
+  var ticks='',tickLabel=chartTickFormatter(factor,step);
   for(var tick=Math.ceil(low/step);tick<=Math.floor(high/step);tick++){
     var reading=tick*step,x=pos(reading);
-    if(x>=3&&x<=97)ticks+='<span style="--position:'+x+'%">'+esc(chartValue(reading,step))+'</span>';
+    if(x>=3&&x<=97)ticks+='<span style="--position:'+x+'%">'+esc(tickLabel(reading))+'</span>';
   }
-  var unit=durationUnit()==='points'?'points':durationUnitSymbol();
-  var axis='<div class="g-requirement-scale">'+ticks+'</div><span class="g-requirement-axis-unit">'+esc(ML()+' ('+unit+')')+'</span>';
+  var axis='<div class="g-requirement-scale">'+ticks+'</div><span class="g-requirement-axis-unit">'+esc(ML())+'</span>';
   return rows.map(p=>{
     var lower=p.specification?.lower,upper=p.specification?.upper;
     var bounds=Number.isFinite(lower)||Number.isFinite(upper);
@@ -3576,11 +4187,15 @@ function requirementsGraphic(periods,weighted,direction){
     var references=[['Actual',p.value,'g-insight-actual','var(--insight-actual-color)'],['Target',target?p.target:null,'g-insight-target','var(--amber-600)'],
       ['Lower limit',lower,'g-requirement-limit','var(--teal-600)'],['Upper limit',upper,'g-requirement-limit','var(--teal-600)']]
       .filter(([,value])=>Number.isFinite(value));
-    var labels='<div class="g-requirement-labels" aria-hidden="true">'+references.map(([label,reading,mark,color])=>{
+    var labels=showLabels?'<div class="g-requirement-labels" aria-hidden="true">'+references.map(([label,reading,mark,color])=>{
       var position=pos(reading),style='--position:'+position+'%;--mark-color:'+color;
-      return '<i class="g-requirement-leader" style="'+style+'"></i><span class="g-requirement-label" data-position="'
-        +position+'" style="'+style+'">'+esc(label+' '+value(reading))+'</span>';
-    }).join('')+'</div>';
+      const sameRounded=label==='Actual'&&references.some(([kind,v])=>kind!=='Actual'&&v!==reading&&chartNumber(v)===chartNumber(reading));
+      const actualStatus=sameRounded&&typeof p.specification?.conforms==='boolean'
+        ?p.specification.conforms?' · Within limits':' · Outside limits'
+        :sameRounded&&typeof p.target_met==='boolean'?p.target_met?' · Meets target':' · Misses target':'';
+      return '<svg class="g-requirement-leader" style="'+style+'"><line x1="0" x2="0" y1="0" y2="100%"/></svg><span class="g-requirement-label" data-position="'
+        +position+'" style="'+style+'">'+esc(label+' '+chartNumber(reading)+actualStatus)+'</span>';
+    }).join('')+'</div>':'';
     return '<div class="g-requirement-reading">'+(rows.length>1&&p.first_date?'<h4>'+periodLabel(p)+'</h4>':'')
       +legend+'<div class="g-requirement-plot"><div class="g-requirement-track">'+band
       +references.map(([label,reading,mark])=>{
@@ -3597,7 +4212,12 @@ function placeRequirementLabels(area){
   var width=area.clientWidth;
   if(!width)return;
   var lanes=[],height=0;
-  for(var label of area.querySelectorAll('.g-requirement-label')){
+  var trackMarks=area.previousElementSibling.querySelectorAll('.g-requirement-mark');
+  var bounds=area.getBoundingClientRect(),zoom=bounds.width/width;
+  for(var [index,label] of [...area.querySelectorAll('.g-requirement-label')].entries()){
+    var mark=trackMarks[index].getBoundingClientRect(),leader=label.previousElementSibling;
+    leader.style.setProperty('--leader-left',(mark.left+mark.width/2-bounds.left)/zoom+'px');
+    leader.style.setProperty('--leader-top',(mark.top+mark.height/2-bounds.top)/zoom+'px');
     var center=Number(label.dataset.position)*width/100,size=label.offsetWidth;
     height=Math.max(height,label.offsetHeight);
     var left=Math.max(0,Math.min(center-size/2,width-size)),right=left+size;
@@ -3697,10 +4317,10 @@ function requirementsPanel(R,evidence=false){
     +(assessment.limitations||[]).map(item=>'<p>'+esc(item)+'</p>').join('')+scoreCutoffBasis(R)
     +requirementsChecksEvidence(result.checks,assessment);
   var state=observedState(R);
-  var visual='<div class="g-observed-filters">'+reportChartControls("requirements",state)+'</div>'
-    +'<h4 class="g-insights-chart-title">'+esc(metric+' ('+(durationUnit()==='points'?'points':durationUnitSymbol())+') against account requirements')+'</h4>'
+  var visual='<div class="g-observed-filters">'+reportChartControls("requirements",state,true,state.requirementsView!=="table"&&periods.some(p=>Number.isFinite(p.value)))+'</div>'
+    +'<h4 class="g-insights-chart-title">'+esc(metric+' against account requirements')+'</h4>'
     +'<div class="g-insights-labeled-chart">'
-    +(state.requirementsView==="table"?requirementsTable(periods):requirementsGraphic(periods,weighted,R.analysis_setup?.direction||R.metric?.direction))+'</div>';
+    +(state.requirementsView==="table"?requirementsTable(periods):requirementsGraphic(periods,weighted,R.analysis_setup?.direction||R.metric?.direction,chartLabelsShown(state,'requirements')))+'</div>';
   return '<section id="g-requirements-panel" class="g-chart-container-box">'+gSlideResult(
     gSlideTakeaway(answers,factsHtml+'<button type="button" class="g-linkbtn" data-chapter="g-requirements-evidence">See account requirements in Evidence</button>'),visual)+'</section>';
 }
@@ -3829,6 +4449,7 @@ function stabilitySignalLabels(signals){
   return {labels,lowerLanes,upperLanes};
 }
 function stabilityPlotContent(R,weeks,moving,width,style){
+  const showLabels=chartLabelsShown(observedState(R),'stability');
   var key=moving?'range':'value',chart=moving?'moving_range':'individuals';
   var values=weeks.map(week=>week[key]).filter(Number.isFinite);
   if(!values.length)return {markup:'<p>No eligible complete weeks are available for this scope.</p>',spans:[]};
@@ -3848,9 +4469,10 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   var low=moving?0:Math.floor((min-pad)/quantum)*quantum;
   var unitStep=Math.ceil((max+pad-low)/6/quantum)*quantum;
   var high=low+6*unitStep;
-  var referenceWidth=Math.max(0,...controls.map(([value,name])=>measure(name+' '+durationNumber(value,false),detailFont)),
-    ...weeks.flatMap(week=>!moving&&Number.isFinite(week.reference?.target)?[measure('Target '+durationNumber(week.reference.target,false),detailFont)]:[]));
-  var left=gutter+Math.max(52,30+Math.max(...Array.from({length:7},(_,i)=>measure(chartValue(low+i*unitStep,unitStep),axisFont))));
+  var referenceWidth=showLabels?Math.max(0,...controls.map(([value,name])=>measure(name+' '+chartNumber(value),detailFont)),
+    ...weeks.flatMap(week=>!moving&&Number.isFinite(week.reference?.target)?[measure('Target '+chartNumber(week.reference.target),detailFont)]:[])):0;
+  var axisLabels=chartTickFormatter(factor,unitStep);
+  var left=gutter+Math.max(52,30+Math.max(...Array.from({length:7},(_,i)=>measure(axisLabels(low+i*unitStep),axisFont))));
   var right=width-Math.max(22,referenceWidth?referenceWidth+24:26);
   var x=i=>weeks.length===1?(left+right)/2:left+(right-left)*i/(weeks.length-1);
   var spanYears=weeks[0].end.slice(0,4)!==weeks.at(-1).end.slice(0,4);
@@ -3858,7 +4480,7 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   var signalDate=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',timeZone:'UTC'});
   var dateSpacing=Math.max(...weeks.map(week=>measure(tickDate.format(new Date(week.end+'T00:00:00Z')),axisFont)))+12;
   var signals=[];
-  weeks.forEach((week,index)=>{
+  if(showLabels)weeks.forEach((week,index)=>{
     if(!Number.isFinite(week[key])||!week.hits.some(hit=>hit.chart===chart))return;
     var at=x(index),weekLabel=(signals.length+1)+'. Wk '+signalDate.format(new Date(week.end+'T00:00:00Z'));
     var boxWidth=measure(weekLabel,detailFont)+10,boxLeft=Math.max(left,Math.min(right-boxWidth,at-boxWidth/2));
@@ -3867,11 +4489,11 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   var {labels,lowerLanes,upperLanes}=stabilitySignalLabels(signals);
   if(upperLanes){var strip=4+upperLanes*22;top+=strip;bottom+=strip;}
   var y=value=>top+(bottom-top)*(high-value)/(high-low);
-  var plot='';
+  var plot='',tickLabel=chartTickFormatter(factor,unitStep);
   for(var i=0;i<7;i++){
     var value=low+i*unitStep;
     plot+='<line class="g-stability-grid" x1="'+left+'" x2="'+right+'" y1="'+y(value)+'" y2="'+y(value)+'"/>'
-      +'<text class="gc-tick" x="'+(left-8)+'" y="'+(y(value)+4)+'" text-anchor="end">'+esc(chartValue(value,unitStep))+'</text>';
+      +'<text class="gc-tick" x="'+(left-8)+'" y="'+(y(value)+4)+'" text-anchor="end">'+esc(tickLabel(value))+'</text>';
   }
   var path='',previous=false,points=[],segments=[],weekEvents=moving?new Map():stabilityWeekEvents(R,weeks);
   weeks.forEach((week,index)=>{
@@ -3895,7 +4517,7 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   var sizes=runChartMarkSizes(slot,4.5);
   var references=segments.map(({start,end,reference})=>({ref:reference,x1:Math.max(left,x(start)-halfStep),x2:Math.min(right,x(end)+halfStep)}));
   var spans=useScale?references:[], geometry={left,right,top,bottom,width};
-  var id='stability-individuals', layers=runReferenceLayers(spans,{id,...geometry,low,high,y,width:sizes.trace,
+  var id='stability-individuals', layers=runReferenceLayers(spans,{id,...geometry,low,high,y,width:sizes.trace,showLabels,
     trace:(value,color)=>runLevelTrace(weeks,value,color,x,y)});
   var fills=spans.filter(({ref})=>Number.isFinite(ref.lower)&&Number.isFinite(ref.upper)).map(({ref,x1,x2})=>
     `<rect class="dt-band" x="${x1}" y="${y(ref.upper)}" width="${x2-x1}" height="${y(ref.lower)-y(ref.upper)}"/>`).join('');
@@ -3903,7 +4525,7 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   plot+='<path class="g-stability-axis" fill="none" stroke="var(--slate-400)" d="M'+left+' '+top+'V'+bottom+'M'+left+' '+axisY+'H'+right+'"/>'
     +'<text class="gc-tick" x="'+((left+right)/2)+'" y="'+(height-6)+'" text-anchor="middle">Week ending</text>'
     +'<text class="gc-tick" transform="translate('+(14+gutter)+' '+((top+bottom)/2)+') rotate(-90)" text-anchor="middle">'
-    +esc(moving?'Moving range ('+durationUnitSymbol()+')':stabilityMetricAxis())+'</text>';
+    +esc(moving?'Moving range':ML())+'</text>';
   weeks.forEach((week,index)=>{
     var at=x(index);
     if(index!==0&&index!==weeks.length-1&&(at-lastTick<dateSpacing||right-at<dateSpacing))return;
@@ -3926,9 +4548,9 @@ function stabilityPlotContent(R,weeks,moving,width,style){
   marks.sort((a,b)=>y(a.value)-y(b.value));
   marks.forEach((mark,index)=>{mark.labelY=Math.max(y(mark.value),index?marks[index-1].labelY+22:top);});
   for(var i=marks.length-1;i>=0;i--)marks[i].labelY=Math.min(marks[i].labelY,i===marks.length-1?bottom:marks[i+1].labelY-22);
-  plot+=marks.map(({value,name,kind,edge,labelY})=>{
-    var label=name+' '+durationNumber(value,false),boxWidth=measure(label,detailFont)+10,boxLeft=Math.min(right+10,width-boxWidth-2);
-    return (edge===boxLeft&&y(value)===labelY?'':'<path class="g-stability-leader" d="M'+edge+' '+y(value)+'L'+boxLeft+' '+labelY+'"/>')
+  if(showLabels)plot+=marks.map(({value,name,kind,edge,labelY})=>{
+    var label=name+' '+chartNumber(value),boxWidth=measure(label,detailFont)+10,boxLeft=Math.min(right+10,width-boxWidth-2);
+    return (edge===boxLeft&&y(value)===labelY?'':'<path class="g-stability-leader is-'+kind+'" d="M'+edge+' '+y(value)+'L'+boxLeft+' '+labelY+'"/>')
       +stabilityLabel(label,boxLeft,labelY,boxWidth,kind);
   }).join('');
   var labelCenter=({above,lane})=>above?top-16-lane*22:bottom+22+lane*22;
@@ -4100,11 +4722,13 @@ function stabilityPanel(R){
 
   }
   var takeaway=gSlideTakeaway(answer,'<h4>Facts</h4><ul>'+facts+chartPeriodFact(stabilityScope(R))
-    +'</ul><button type="button" class="g-linkbtn" data-chapter="g-stability-evidence">See Stability in Evidence</button>');
+    +'</ul><button type="button" class="g-linkbtn" data-chapter="g-stability-evidence">See Stability in Evidence</button>',{labels:STABILITY_TESTS.map(([name])=>name)});
   var [view,label]=reportViews("stability",state).current;
   var metric='Weekly weighted '+(metricId()==='aht'?ml():ML())+' ('+(durationUnit()==='points'?'points':durationUnitSymbol())+')';
   var body=view==='scale'?stabilityScale(selection):view==='out-of-control'?stabilitySignals(selection):stabilityChart(R,weeks,view==='moving-range');
-  var visual=reportChartControls("stability",state)+'<h4 class="g-insights-chart-title">'+esc(metric+' · '+label)+'</h4>'
+  var labelView=(view==='chart'||view==='moving-range')&&eligible.length>0
+    &&(rate!==null||weeks.some(week=>Number.isFinite(week.reference?.target)));
+  var visual=reportChartControls("stability",state,true,labelView)+'<h4 class="g-insights-chart-title">'+esc(metric+' · '+label)+'</h4>'
     +'<div class="g-insights-labeled-chart">'+body+'</div>';
   return '<section id="g-stability-panel" class="g-chart-container-box">'+gSlideResult(takeaway,visual)+'</section>';
 }
@@ -4136,8 +4760,8 @@ function gCh1(R){
   else if(xHasTarget(R)===null&&(!assessment||assessment.status==="published"))body+='<p class="muted">No account target or specification limit applies to this selection.</p>';
   if(showsStability(R)){
     const split=hasRecordedEvents(R);
-    const daily=!split||gShowsPanel(R,"trend")
-      ?gQuestionSlide("g-slide-daily","How did "+ml()+" change day to day?",split?baselineDailyChart(R):gObservedTrend(R)):'';
+    const daily=gShowsPanel(R,"trend")
+      ?gQuestionSlide("g-slide-daily","How did "+ml()+" change day to day?",baselineDailyChart(R)):'';
     const events=split&&gShowsPanel(R,"recorded-events")
       ?gQuestionSlide("g-slide-recorded-events","How did "+ml()+" differ on days with recorded events?",gObservedTrend(R)):'';
     const stability=gQuestionSlide("g-slide-stability","Was performance stable over time?",stabilityPanel(R));
@@ -4193,7 +4817,7 @@ function gBoxMedianCallouts(R,boxes,peer,format=fcValue,ranks=gBoxMedianRanks(R,
     +(worst.length===1?' had':' shared')+' the least favorable.', '<h4>Facts</h4><p>'+esc(typical(best)+'. '+typical(worst)
       +'. The middle half of eligible agent results ranged from '+spread(best[0])+' in '+best[0].key+' and from '+spread(worst[0])
       +' in '+worst[0].key+'.')+'</p>'+gNextSteps(worst.map(group=>group.key),
-        'Review the median, spread and eligible agent count for each group in Evidence.'));
+        'Review the median, spread and eligible agent count for each group in Evidence.'),{labels:[peer?.label,...best.concat(worst).map(group=>group.key)]});
 }
 function boxSelection(R,state){
   if(!R.group_charts)return null;
@@ -4207,7 +4831,7 @@ function boxSelection(R,state){
   if(!options.some(function(pair){return pair[0]===dim;}))dim=options[0][0];
   var totals=new Map((R.by_groups?.[dim]||[]).map(g=>[g.key,g]));
   var groups=views[dim]||(R.group_charts[dim]||[]).map(g=>({...g,...totals.get(g.key)}));
-  var label=peer?peer.label:ML(),axis=peer?label+' ('+reportUnitSymbol(peer.unit)+')':chartMetricAxis();
+  var label=peer?peer.label:ML(),axis=label;
   var format=peer?value=>Number.isFinite(value)?value.toLocaleString('en-US',{maximumSignificantDigits:5})+' '+peer.unit:'—':fcValue;
   var measureOptions=[[selected,ML()]].concat(extra.filter(item=>item.id!==selected).map(item=>[item.id,item.label]));
   return {peer,selected,views,extra,labels,options,dim,groups,label,axis,format,measureOptions};
@@ -4230,7 +4854,7 @@ function gBreakdowns(R,evidence=false){
   var extremes=[ranks.best.values().next().value,ranks.worst.values().next().value].filter(Boolean);
   var visible=new Set([...new Set([...extremes,...eligible])].slice(0,10));
   var boxes=eligible.filter(g=>visible.has(g));
-  var method='<p>Each agent contributes one '+esc(label.toLowerCase())+' value pooled over their eligible results in the group. Boxes show the middle half and median. Whiskers extend to the last observations within 1.5 box widths of either end, with values beyond those fences shown as dots.</p>';
+  var method='<p>Each agent contributes one '+esc(metricSentenceCase(label))+' value pooled over their eligible results in the group. Boxes show the middle half and median. Whiskers extend to the last observations within 1.5 box widths of either end, with values beyond those fences shown as dots.</p>';
   if(views[dim]){
     var coverage=groups.reduce((total,g)=>total+g.count,0);
     var source=peer||extra.find(item=>item.id===selected);
@@ -4255,7 +4879,38 @@ function gBreakdowns(R,evidence=false){
     +gSlideResult(gBoxMedianCallouts(R,eligible,peer,format,ranks),state.boxView==="table"?values:body)
     +'<button type="button" id="g-box-evidence-link" class="g-linkbtn" data-chapter="g-box-evidence">See group values in Evidence</button></section>';
 }
-function chartValue(value,spacing,factor=durationFactor()){
+const chartNumberFormat=new Intl.NumberFormat('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
+function chartNumber(value,factor=durationFactor()){
+  if(!Number.isFinite(value))return '—';
+  const shown=value/factor;
+  if(!Number.isFinite(shown))return '—';
+  if(shown!==0&&Math.abs(shown)<.05)return (shown<0?'−':'')+'<0.1';
+  return Math.abs(shown)>=1e12?shown.toExponential(1):chartNumberFormat.format(shown);
+}
+function signedChartNumber(value,factor=durationFactor()){
+  return (value<0?'−':value>0?'+':'')+chartNumber(Math.abs(value),factor);
+}
+function horizontalTargetGutter(value,unit=''){
+  return Number.isFinite(value)?Math.max(72,54+6*(chartNumber(value)+unit).length):14;
+}
+function chartTickFormatter(factor=durationFactor(),spacing=0){
+  const drawn=new Set();
+  const exponent=spacing>0?Math.max(0,Math.ceil(-Math.log10(spacing/factor))-1):0;
+  return value=>{
+    const scaledFactor=factor*10**(-exponent);
+    const scaled=exponent&&value!==0&&Math.abs(value/scaledFactor)<1e12;
+    const label=scaled?chartNumber(value,scaledFactor)+'e−'+exponent:chartNumber(value,factor);
+    if(drawn.has(label))return '';
+    drawn.add(label);
+    return label;
+  };
+}
+function horizontalTargetTag(value,edge,y,right,unit=''){
+  const detail='Target '+durationNumber(value,false)+' '+durationUnitSymbol();
+  return '<g class="g-chart-target-tag"><title>'+esc(detail)+'</title><path d="M'+edge+' '+y+' H'+(right+5)+'"/>'
+    +'<text x="'+(right+8)+'" y="'+(y+4)+'">'+esc('Target '+chartNumber(value)+unit)+'</text></g>';
+}
+function chartRangeValue(value,spacing,factor=durationFactor()){
   var shown=value/factor;
   var digits=Math.max(0,Math.min(12,1-Math.floor(Math.log10(spacing/factor))));
   return shown.toLocaleString('en-US',{maximumFractionDigits:digits});
@@ -4268,6 +4923,7 @@ function gBoxPlot(groups,label,axis,format,factor,ranks){
   if(hi===lo){var pad=Math.abs(lo)*.01||1;lo-=pad;hi+=pad;}
   if(!Number.isFinite(hi-lo))return '<p>These groups exceed the shared axis range. See their values in the table.</p>';
   var step=(hi-lo)/4,ticks=Array.from({length:5},function(_,i){return lo+i*step;});
+  const tickLabel=chartTickFormatter(factor,step);
   function x(v){return 4+592*((v-lo)/(hi-lo));}
   function line(a,b,y1,y2,cls){return '<line x1="'+x(a)+'" x2="'+x(b)+'" y1="'+y1+'" y2="'+y2+'" class="'+cls+'"/>';}
   var legend=[["box","Middle 50%"],["median","Median"],["whisker","Whiskers"]];
@@ -4275,14 +4931,14 @@ function gBoxPlot(groups,label,axis,format,factor,ranks){
   return chartLegend(legend)+'<div role="group" aria-label="'+esc(label+" distribution by group")+'">'+groups.map(function(g){
     var b=g.box;
     var rank=ranks.best.has(g)?'best':ranks.worst.has(g)?'worst':'';
-    return '<div class="g-box-row'+(rank?' g-box-'+rank:'')+'"><span>'+esc(g.key)+' <small class="muted">('+n0(g.agent_count)+' agents)</small>'
+    return '<div class="g-box-row'+(rank?' g-box-'+rank:'')+'"><span>'+esc(g.key)+' <small>('+n0(g.agent_count)+' agents)</small>'
       +(rank?'<small class="g-box-rank">'+(rank==='best'?'Best':'Worst')+' observed median</small>':'')+'</span><svg viewBox="0 0 600 30" preserveAspectRatio="none" aria-hidden="true" stroke="'+(rank?'currentColor':'var(--ink)')+'">'
       +ticks.map(function(v){return line(v,v,0,30,"gc-grid");}).join("")
       +line(b.lower,b.upper,15,15,"g-box-whisker")+line(b.lower,b.lower,9,21,"g-box-cap")+line(b.upper,b.upper,9,21,"g-box-cap")
       +'<rect x="'+x(b.q1)+'" y="5" width="'+(x(b.q3)-x(b.q1))+'" height="20" fill="var(--accent-soft)"/>'
       +line(b.median,b.median,5,25,"g-box-median")+b.outliers.map(function(v){return '<circle cx="'+x(v)+'" cy="15" r="3" fill="var(--ink)"><title>'+esc(format(v))+'</title></circle>';}).join("")+'</svg></div>';
-  }).join("")+'<div class="g-box-row"><span class="muted">'+esc(axis)+'</span><div class="g-box-ticks">'
-    +ticks.map(function(v){return '<span style="left:'+(x(v)/6)+'%">'+esc(chartValue(v,step,factor))+'</span>';}).join("")+'</div></div></div>';
+  }).join("")+'<div class="g-box-row"><span>'+esc(axis)+'</span><div class="g-box-ticks">'
+    +ticks.map(tick=>'<span style="left:'+(x(tick)/6)+'%">'+esc(tickLabel(tick))+'</span>').join("")+'</div></div></div>';
 }
 function histogramView(H,state){return H.views.find(view=>view.key===state.histogram)||H.views[0];}
 function histogramFilterFields(R,state){
@@ -4332,20 +4988,20 @@ function gHistogram(R,evidence=false){
   if(!H)return '';
   var state=observedState(R),overall=H.views[0],view=histogramView(H,state);
   var cohort=view!==overall;
-  var W=720,L=58,T=16,P=640,B=168,bins=view.counts.length;
-  var low=H.edges[0],high=H.edges[bins],target=xHasTarget(R);
+  var bins=view.counts.length,target=xHasTarget(R),low=H.edges[0],high=H.edges[bins];
+  var W=720,L=58,T=16,P=640,B=168;
   var domainLow=low,domainHigh=high;
   var direction=R.analysis_setup?.direction||R.metric?.direction;
   var lowerBetter=direction==='lower_is_better',higherBetter=direction==='higher_is_better';
   var palette=histogramPalette(R,low,high);
-  var legend=[["median","Overall agent median: "+fcValue(H.median)]];
+  var legend=[["median","Overall agent median: "+chartNumber(H.median)+' '+durationUnitSymbol()]];
   if(cohort)legend.push(["overall","All agents"]);
   if(palette)legend.push(["hist-ramp",(cohort?view.label+": ":"")+"Less to more favorable"]);
   legend.push(["hist-neutral",palette?"Reference bin or no color distinction":cohort?view.label:"All agents"]);
-  if(target!==null)legend.push(["target","Target: "+fcValue(target)]);
+  if(target!==null)legend.push(["target","Target: "+chartNumber(target)+' '+durationUnitSymbol()]);
   var peak=Math.max(...overall.counts),step=Math.max(1,Math.ceil(peak/5)),top=Math.max(step,step*Math.ceil(peak/step));
   var spacing=(high-low)/bins||1;
-  function label(v){return esc(chartValue(v,spacing));}
+  function label(v){return esc(chartRangeValue(v,spacing));}
   function y(n){return B-(B-T)*n/top;}
   function x(value){return domainLow===domainHigh?L+P/2:L+P*(value-domainLow)/(domainHigh-domainLow);}
   var targetSide=target===null?'':target<domainLow?'below':target>domainHigh?'above':'';
@@ -4393,10 +5049,10 @@ function gHistogram(R,evidence=false){
         +' m '+(-5*side)+' -5 l '+(5*side)+' 5 l '+(-5*side)+' 5"/></g>';
     }
   }
-  var tickSpacing=(domainHigh-domainLow)/bins||1;
+  var tickLabel=chartTickFormatter(durationFactor(),spacing);
   var ticks=domainLow===domainHigh?[low]:H.edges.filter((_,i)=>i%2===0||i===bins);
   ticks.forEach(function(v){
-    graph+='<text x="'+x(v)+'" y="'+(B+18)+'" text-anchor="middle">'+esc(chartValue(v,tickSpacing))+'</text>';
+    graph+='<text x="'+x(v)+'" y="'+(B+18)+'" text-anchor="middle">'+esc(tickLabel(v))+'</text>';
   });
   graph+='<text x="'+(L+P/2)+'" y="'+(B+40)+'" text-anchor="middle">'+esc(chartMetricAxis())+'</text></svg>';
   var values='<div class="scroll" tabindex="0" aria-label="Histogram counts"><table><thead><tr><th scope="col">'+esc(ML()+' ('+durationUnitSymbol()+')')+'</th><th scope="col">All agents</th>'+(cohort?'<th scope="col">'+esc(view.label)+'</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -4410,7 +5066,7 @@ function gHistogram(R,evidence=false){
     return indices;
   },[]);
   var total=view.counts.reduce((sum,count)=>sum+count,0);
-  var leadingRanges=topBins.map(index=>chartValue(H.edges[index],spacing)+'–'+chartValue(H.edges[index+1],spacing));
+  var leadingRanges=topBins.map(index=>chartRangeValue(H.edges[index],spacing)+'–'+chartRangeValue(H.edges[index+1],spacing));
   var population=cohort?view.label:'the overall distribution';
   var takeaway='In '+population+', '+n0(most)+' of '+n0(total)+' agents fell in each of the '+n0(topBins.length)+' most populated ranges.';
   var facts='<h4>Facts</h4><p>'+n0(total)+' eligible agents. '+(topBins.length>1?'Tied ranges: '+esc(leadingRanges.join(', ')+' '+durationUnitSymbol())+'.':'')+'</p>';
@@ -4418,14 +5074,14 @@ function gHistogram(R,evidence=false){
     takeaway='All '+n0(total)+' agents in '+population+' recorded '+fcValue(low)+'.';
   }else if(topBins.length===1){
     var topBin=topBins[0],lower=H.edges[topBin],upper=H.edges[topBin+1];
-    var range=chartValue(lower,spacing)+'–'+chartValue(upper,spacing)+' '+durationUnitSymbol();
+    var range=chartRangeValue(lower,spacing)+'–'+chartRangeValue(upper,spacing)+' '+durationUnitSymbol();
     takeaway='In '+population+', '+n0(most)+' of '+n0(total)+' agents fell in the most populated range, '+range+'.';
   }
   return '<section id="g-observed-histogram" class="g-chart-container-box g-observed-comparison" aria-labelledby="g-observed-histogram-title"><h3 id="g-observed-histogram-title">Distribution of agent performance</h3>'
     +scope
     +'<div class="g-observed-filters">'+reportChartControls("histogram",state)+'</div>'
     +(palette?'<p class="muted">'+esc((lowerBetter?'Lower values are favorable. ':higherBetter?'Higher values are favorable. ':'')+palette.describe)+'</p>':'')
-    +gSlideResult(gSlideTakeaway(takeaway,facts),state.histogramView==="table"?values:'<div class="g-histogram-legend">'+chartLegend(legend)+'</div>'+graph)
+    +gSlideResult(gSlideTakeaway(takeaway,facts,{labels:[population]}),state.histogramView==="table"?values:'<div class="g-histogram-legend">'+chartLegend(legend)+'</div>'+graph)
     +'<button type="button" id="g-histogram-evidence-link" class="g-linkbtn" data-chapter="g-histogram-evidence">See histogram counts in Evidence</button></section>';
 }
 function redrawObservedChart(id,html){
@@ -4440,6 +5096,7 @@ function redrawObservedChart(id,html){
   var replacement=document.getElementById(id);
   if(toolbar&&replacement.querySelector('[data-observed-chart],[data-chart-view],[data-chart-expand]')){
     collectSlideControls(replacement,toolbar);
+    if(modal?.guide)toolbar.append(modal.guide);
   }
   if(modal?.card===chart){
     modal.card=replacement;
@@ -4456,11 +5113,14 @@ function redrawObservedChart(id,html){
   gRefreshGuide();
   sizeChartTables();
 }
+function redrawDailyPlot(plot,R){
+  drawDailyPlot(plot,plot.hasAttribute('data-historical-daily')?baselineDailyResult(R):dailyEventSelection(R,observedState(R)));
+}
 const dailyAhtPlotObserver=new ResizeObserver(entries=>{
   const R=xR();
-  if(R)for(const entry of entries)drawRecordedEvents(entry.target,dailyEventSelection(R,observedState(R)));
+  if(R)for(const entry of entries)redrawDailyPlot(entry.target,R);
 });
-let observedDailyAhtPlot;
+let observedDailyAhtPlots=new Set();
 function sizeChartTables(){
   document.querySelectorAll('.g-requirement-labels').forEach(placeRequirementLabels);
   for(const frame of document.querySelectorAll('.dt-comparison-frame')){
@@ -4483,17 +5143,19 @@ function sizeChartTables(){
     if(plot)stabilityPlotObserver.observe(plot);
   }
   if(plot)layoutStabilityPlot(plot);
-  const dailyPlot=document.querySelector('.g-daily-aht .dt-plot');
-  if(dailyPlot!==observedDailyAhtPlot){
-    dailyAhtPlotObserver.disconnect();
-    observedDailyAhtPlot=dailyPlot;
-    if(dailyPlot)dailyAhtPlotObserver.observe(dailyPlot);
+  const dailyPlots=new Set(document.querySelectorAll('.g-daily-aht .dt-plot'));
+  for(const plot of observedDailyAhtPlots)if(!dailyPlots.has(plot))dailyAhtPlotObserver.unobserve(plot);
+  for(const plot of dailyPlots){
+    if(!observedDailyAhtPlots.has(plot))dailyAhtPlotObserver.observe(plot);
+    if(xR())redrawDailyPlot(plot,xR());
   }
-  if(dailyPlot&&xR())drawRecordedEvents(dailyPlot,dailyEventSelection(xR(),observedState(xR())));
+  observedDailyAhtPlots=dailyPlots;
+  const dial=document.querySelector('#guide-g-slide-daily:popover-open .g-historical-guide-dial');
+  if(dial&&xR())dial.outerHTML=historicalGuideDial(xR());
   var expanded=document.querySelector(".g-trend-focus .g-modal-scroll-pane");
   var root=document.getElementById("g-report-presentation");
   if(root&&!root.hidden||expanded){
-    for(var pane of document.querySelectorAll('#g-report-presentation .g-slide-content .scroll:has(>table), .g-trend-focus .g-daily-event-table')){
+    for(var pane of document.querySelectorAll('#g-report-presentation .g-slide-content .scroll:not(.g-historical-table):has(>table), .g-trend-focus .g-daily-event-table')){
       var rows=pane.querySelector(':scope > table').tBodies[0]?.rows;
       if(!rows||rows.length<=7||!pane.getClientRects().length)continue;
       var last=rows[6].getBoundingClientRect(),bounds=pane.getBoundingClientRect(),zoom=pane.currentCSSZoom||1;
@@ -4557,7 +5219,8 @@ function gAgentHeatmap(R,evidence=false,complete=false){
   }
   var header=columns.map(column=>{
     var coverage=group.coverage[column.id]||0,total=map.totals[column.id]||0;
-    return '<th scope="col" title="'+esc(evidence?source(column):column.label)+'">'+esc(column.label)+'<small>'+esc(unit(column)+(evidence?' · '+column.source:''))+'</small>'
+    return '<th scope="col" title="'+esc(evidence?source(column):column.label+' ('+unit(column)+')')+'">'+esc(column.label)
+      +(shaded&&columns.length===1?'':'<small>'+esc(unit(column)+(evidence?' · '+column.source:''))+'</small>')
       +(coverage<total?'<small>'+n0(coverage)+' of '+n0(total)+' attributed</small>':'')+'</th>';
   }).join('');
   function tableRows(items){return items.map(row=>'<tr><th scope="row">'+esc(row.group)+'</th>'+columns.map(column=>{
@@ -4567,7 +5230,7 @@ function gAgentHeatmap(R,evidence=false,complete=false){
     var value=column.unit==='seconds'&&metricKind()==='seconds'?cell.value/durationFactor():cell.value;
     var exact=String(value)+' '+unit(column)+' · '+n0(cell.count)+' observations'+(evidence?' · '+source(column):'');
     return '<td'+(shaded?tint(column.id,cell.value):'')+' title="'+esc(exact)+'" aria-label="'+esc(exact)+'">'
-      +esc(componentStat(value))+'<small>n = '+n0(cell.count)+'</small></td>';
+      +esc(shaded?chartNumber(value,1):componentStat(value))+'<small>n = '+n0(cell.count)+'</small></td>';
   }).join('')+'</tr>').join('');}
   var scope=evidence?chartScopeTitle(R,'Heatmap by '+group.label):presentationScopeTitle(R,{agentGroup:group.label});
   function table(items,label){return '<div class="scroll" tabindex="0" aria-label="'+label+'"><table class="g-hourly-grid g-agent-heatmap-grid"><caption>'+esc(group.label)+' results and eligible observation counts</caption>'
@@ -4576,7 +5239,7 @@ function gAgentHeatmap(R,evidence=false,complete=false){
   var shown='<p>'+(evidence?esc(chartScopeText(R,'Report dates'))+'. ':'')+'Showing '+n0(rows.length?first+1:0)+'–'+n0(first+rows.length)+' of '+n0(group.rows.length)+'. A dash marks no eligible observations.</p>';
   var completeControl=evidence&&pages.length>1?'<details data-complete-agent-results><summary>Show all '+n0(group.rows.length)+' results for this grouping</summary></details>':'';
   var takeaway=gSlideTakeaway(group.label+' results include '+n0(group.rows.length)+' rows and '+n0(columns.length)+' measures.',
-    shaded?gTakeawayMeaning('Stronger blue marks higher values within each measure. The scale stays the same across pages.'):'' );
+    shaded?gTakeawayMeaning('Stronger blue marks higher values within each measure. The scale stays the same across pages.'):'',{labels:[group.label]});
   return '<section id="g-agent-heatmap" class="g-chart-container-box" aria-labelledby="g-agent-heatmap-title"><h3 id="g-agent-heatmap-title">Performance by agent and group</h3>'
     +scope+'<div class="g-agent-heatmap-controls"><div class="g-observed-filters">'+reportChartControls("agents",state)
     +(pages.length>1?observedSelect('g-agent-heatmap-page','Page',pages,String(page)):'')+'</div>'
@@ -4632,7 +5295,9 @@ function fcTrajectory(F){
     +' to '+fcValue(last.value)+' in the week of '+last.start+'.';
 }
 function fcChart(F){
-  var hist=F.history.map(function(w){return {s:w.start,v:w.value};}),fut=F.forecast.map(function(w){return {s:w.start,v:w.value};}),all=hist.concat(fut),W=640,H=260,L=70,T=14,B=34,Rr=14;
+  var lastTarget=F.forecast.findLastIndex(week=>Number.isFinite(week.target));
+  var target=F.forecast[lastTarget]?.target;
+  var hist=F.history.map(function(w){return {s:w.start,v:w.value};}),fut=F.forecast.map(function(w){return {s:w.start,v:w.value};}),all=hist.concat(fut),W=640,H=260,L=70,T=14,B=34,Rr=horizontalTargetGutter(target);
   var vals=all.map(function(p){return p.v;}).filter(Number.isFinite).concat(F.forecast.map(week=>week.target).filter(Number.isFinite));
   var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals),pad=(hi-lo||1)*0.08;lo-=pad;hi+=pad;
   if(!Number.isFinite(hi-lo)||hi<=lo)return '<p>The projection chart cannot display this value range. Use Projected weeks or Observed history to inspect the values.</p>';
@@ -4650,15 +5315,16 @@ function fcChart(F){
   var legend=[["observed","Observed weekly "+ml()],["projected","13-week conditional projection",
     tracePointKey('<i class="dt-dot g-projected-point-key"></i>','g-projected-trace-key')]];
   if(fcHasTarget(F))legend.push(["target","Applicable target"]);
-  return chartLegend(legend)+'<figure style="margin:0"><svg class="fc-chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Weekly '+ml()+' with the 13-week conditional projection" style="width:100%;height:auto;color:var(--ink)">'
+  return chartLegend(legend)+'<figure style="margin:0"><svg class="fc-chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Weekly '+ml()+' with the 13-week conditional projection" style="width:100%;height:auto">'
    +'<rect x="'+split.toFixed(1)+'" y="'+T+'" width="'+(W-Rr-split).toFixed(1)+'" height="'+(H-B-T)+'" fill="var(--slate-200)" fill-opacity=".35"/>'
    +runValueGrid(lo,hi,y,L,W-Rr)+tgt+'<path class="g-run-axis" d="M'+L+' '+T+'V'+(H-B)+'H'+(W-Rr)+'"/>'
-   +'<text class="g-run-tick" transform="translate(14 '+((H-B+T)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>'
+   +'<text class="g-run-tick" transform="translate(14 '+((H-B+T)/2)+') rotate(-90)" text-anchor="middle">'+esc(ML())+'</text>'
+   +(lastTarget>=0?horizontalTargetTag(target,Math.min(W-Rr,x(hist.length+lastTarget)+step/2),y(target),W-Rr):'')
    +'<line x1="'+split.toFixed(1)+'" x2="'+split.toFixed(1)+'" y1="'+T+'" y2="'+(H-B)+'" stroke="currentColor" opacity=".3"/>'
    +'<polyline class="g-run-trace" points="'+line(hist,0)+'"/>'
    +'<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 4" points="'+line(joined,hist.length-1)+'"/>'
-   +'<text x="'+split+'" y="'+(T+10)+'" text-anchor="end" font-size="10" fill="currentColor">Observed · </text>'
-   +'<text x="'+split+'" y="'+(T+10)+'" font-size="10" fill="currentColor">Projected</text>'
+   +'<text x="'+split+'" y="'+(T+10)+'" text-anchor="end" font-size="10">Observed · </text>'
+   +'<text x="'+split+'" y="'+(T+10)+'" font-size="10">Projected</text>'
    +[0,fut.length-1].map(i=>'<circle class="gc-pt" cx="'+x(hist.length+i)+'" cy="'+y(fut[i].v)+'" r="3"><title>'
      +esc(fut[i].s+' · '+fcValue(fut[i].v))+'</title></circle>').join('')
    +runDateTick(L,H-B,'Week of '+all[0].s,'start')+runDateTick(W-Rr,H-B,'Week of '+all[all.length-1].s,'end')+'</svg>'
@@ -4697,7 +5363,7 @@ function projectionPanel(R){
   var takeaway=gSlideTakeaway(fcTrajectory(F),'<h4>Facts</h4>'
     +'<p id="g-forecast-target">'+esc(fcCallout(F))+'</p>'+(explanation?gTakeawayMeaning(explanation):'')
     +'<p>Typical error was '+esc(insDifferenceSize(F.model.mad))+' in one-week tests. The full 13-week path has no separate validation.</p>'
-    +'<h4>Next step</h4><p>When the next complete week closes, compare its actual result with that week’s projection and any applicable target.</p>','g-forecast-first');
+    +'<h4>Next step</h4><p>When the next complete week closes, compare its actual result with that week’s projection and any applicable target.</p>',{id:'g-forecast-first',labels:[F.model.label]});
   var visual='<div class="g-observed-filters">'+reportChartControls("projection",state)+'</div><h4 id="g-forecast-trend" data-slide-content-title>Weekly '+ml()+' and the next 13 weeks</h4>'
    +(mode==="chart"?fcChart(F)+projectionScaleSummary(F):forecastValuesTable(F,mode==="history"))
    +'<p class="muted">Prediction ranges and the chance of reaching the target are unavailable.</p>';
@@ -4750,16 +5416,16 @@ function insSignedGap(value){return (value>0?'+':value<0?'−':'')+insDifference
 function signedComparisonBars(rows,label){
   if(!rows.length)return '';
   var bound=Math.max(...rows.map(row=>Math.abs(row.value)))||1;
-  var displayedBound=(bound/durationFactor()).toLocaleString('en-US',{maximumSignificantDigits:3});
+  var displayedBound=chartNumber(bound);
   var unit=metricKind()==='percent'?'percentage points':durationUnitSymbol();
-  return '<div class="g-signed-plot" role="group" aria-label="'+esc(label)+'">'+rows.map(function(row){
+  return '<div class="g-signed-plot" role="group" aria-label="'+esc(label+' ('+unit+')')+'">'+rows.map(function(row){
     var offset=50*(row.value/bound);
     return '<div class="g-signed-row"><div class="g-signed-label"><strong>'+esc(row.key)+'</strong>'
       +(row.status?'<small class="muted">'+esc(row.status)+'</small>':'')
-      +'<span>'+esc(insSignedGap(row.value))+'</span></div>'
+      +'<span title="'+esc(insSignedGap(row.value))+'">'+esc(signedChartNumber(row.value))+'</span></div>'
       +'<div class="g-signed-track" aria-hidden="true"><i class="'+(row.value===0?'is-zero':row.unconfirmed?'is-unconfirmed':'')+'"'
       +' style="left:'+(50+Math.min(0,offset))+'%;width:'+Math.abs(offset)+'%"></i></div></div>';
-  }).join('')+'<div class="g-signed-axis" aria-hidden="true"><span>−'+esc(displayedBound)+'</span><span>0 '+esc(unit)
+  }).join('')+'<div class="g-signed-axis" aria-hidden="true"><span>−'+esc(displayedBound)+'</span><span>0.0'
     +'</span><span>+'+esc(displayedBound)+'</span></div></div>';
 }
 function factorSelection(R,state){
@@ -4832,7 +5498,7 @@ function directGapPanel(R){
     ?'The two groups shared too little work for an adjusted comparison.'
     :'The shared-work comparison gave a gap of '+insDifferenceSize(lead.mix_gap)+'.')+'</p>':'';
   return '<div id="g-direct-gap-panel"><div class="g-observed-filters">'+observedSelect("g-direct-gap-dimension","Compare by",dims.map(dim=>[dim,OBSERVED_DIMENSIONS[dim]]),selected)+'</div>'
-    +gSlideResult(gSlideTakeaway(answer,coverage),insPairwise(R.insights,selected))
+    +gSlideResult(gSlideTakeaway(answer,coverage,{labels:[lead?.first,lead?.second]}),insPairwise(R.insights,selected))
     +'<button type="button" class="g-linkbtn" data-chapter="g-evidence-direct-pairs-'+esc(selected)+'">See this group comparison in Evidence</button></div>';
 }
 function cldEvidence(I,showFactors){
@@ -4852,7 +5518,7 @@ function insCohortTable(c,title,kind,table=true){
   var bars=c.cohorts.filter(function(q){return Number.isFinite(q.value);}).map(function(q){return {key:cohortName(q),value:q.value};});
   return '<h3>'+title+'</h3>'+(table?'<div class="scroll"><table><thead><tr><th>Group</th><th>Agents</th><th>'+gCountLabel()+'</th><th>'+ML()+'</th></tr></thead><tbody>'
     +c.cohorts.map(function(q){return '<tr><th scope="row">'+esc(cohortName(q))+'</th><td>'+n0(q.n_agents)+'</td><td>'+n0(q.observations)+'</td><td>'+(q.value===null?'':fcValue(q.value))+'</td></tr>';}).join('')+'</tbody></table></div>'
-    :comparisonBars(bars,q=>fcValue(q.value),fcValue,ML()+" by "+title.toLowerCase(),true));
+    :comparisonBars(bars,q=>chartNumber(q.value),chartNumber,chartMetricAxis()+" by "+title.toLowerCase(),true));
 }
 function insCohorts(I,R,evidence=false){
   var c=I.cohorts,d=I.deciles;
@@ -4918,7 +5584,7 @@ function insMix(I,R,evidence=false){
   if(evidence)return title+(comparison?'<p>'+esc(comparison)+'</p>':'')+table+'<p>The breakdown compares changes in each line’s performance and changes in its share of eligible volume. The contributions add up to the overall change.</p>';
   return '<section id="g-work-mix" class="g-chart-container-box"><div class="g-observed-filters">'+reportChartControls("mix",state)+'</div>'
     +gSlideResult(gSlideTakeaway(ML()+' '+overall+' between the first and second halves of the observed dates. '+contribution,
-      '<h4>Facts</h4>'+(comparison?'<p>'+esc(comparison)+'</p>':'')+'<ul>'+rows.map(row=>'<li>'+esc(row.key+' '+movement(row.value)+'.')+'</li>').join('')+'</ul>'),
+      '<h4>Facts</h4>'+(comparison?'<p>'+esc(comparison)+'</p>':'')+'<ul>'+rows.map(row=>'<li>'+esc(row.key+' '+movement(row.value)+'.')+'</li>').join('')+'</ul>',{labels:rows.map(row=>row.key)}),
       title+endpoints+(state.mixView==="table"?table:signedComparisonBars(rows,"Contributions to the overall change")))+'</section>';
 }
 function insConstraints(I,R,evidence=false){var c=I.constraints;if(!c||!c.pools.length)return '';
@@ -4944,7 +5610,7 @@ function insConstraints(I,R,evidence=false){var c=I.constraints;if(!c||!c.pools.
     +gSlideResult(gSlideTakeaway(takeaway,'<h4>Facts</h4><p>'+esc(countFacts)+'</p><p>'+sourceFacts+'</p><p>'+cutoffFacts+'</p>'
       +(un>0?'<p>'+Math.round(un*100)+'% had unclassified labels.</p>':'')
       +gNextSteps(rows.filter(row=>row.vital_few&&!row.unclassified).map(row=>row.level1+' · '+row.level2),
-        'Check the recorded controllable occurrences for each constraint before choosing an action.')),
+        'Check the recorded controllable occurrences for each constraint before choosing an action.'),{labels:rows.flatMap(row=>[row.level1,row.level2])}),
       '<h3>Share of controllable constraints by label</h3>'+(state.constraintsView==="table"?table:
       paretoChart(rows.map(p=>({...p,key:p.level2})),"Share of controllable constraints","Share of recorded controllable counts (%)","Labels within the 80% cutoff")))+'</section>';
 }
@@ -4973,8 +5639,8 @@ function paretoChart(rows,label,axisLabel,highlightLabel){
   return '<div role="group" aria-label="'+esc(label)+'">'+chartLegend(legend)+'<div class="scroll" tabindex="0" aria-label="'+esc(label)+'"><div class="g-pareto" style="--pareto-row:'+rowHeight+'px"><div>'+labels+'</div><div>'
     +'<svg viewBox="0 0 '+width+' '+height+'" height="'+height+'" preserveAspectRatio="none" role="img" aria-label="'+esc(label)+' in descending order">'
     +grid+bars+(rows.length>1?'<polyline fill="none" stroke="var(--ink)" stroke-width="2" vector-effect="non-scaling-stroke" points="'+line+'"/>':'')+'</svg>'
-    +'<div class="g-pareto-axis">'+ticks.map(function(tick){return '<span>'+Math.round(tick*100)+'%</span>';}).join("")+'</div>'
-    +'<p class="g-pareto-unit">'+esc(axisLabel)+'</p></div></div></div></div>';
+    +'<div class="g-pareto-axis">'+ticks.map(tick=>'<span>'+chartNumber(tick*100,1)+'</span>').join("")+'</div>'
+    +'<p class="g-pareto-unit" title="'+esc(axisLabel)+'">'+esc(axisLabel.replace(/ \(%\)$/,''))+'</p></div></div></div></div>';
 }
 function insContactDriverImpact(impact,R,evidence=false){
   if(!impact)return '';
@@ -5006,7 +5672,7 @@ function insContactDriverImpact(impact,R,evidence=false){
     +gSlideResult(gSlideTakeaway(answer,
       '<h4>Facts</h4><p>The selected '+kpi+' average was '+esc(fcValue(impact.baseline))+'. Impact combines each driver’s difference with eligible volume.</p>'+adverse
       +gNextSteps(impact.rows.filter(row=>row.vital_few&&row.impact<0).map(row=>row.key),
-        'Review eligible volume and the contribution to the unfavorable gap for each contact driver.')),
+        'Review eligible volume and the contribution to the unfavorable gap for each contact driver.'),{labels:impact.rows.map(row=>row.key)}),
       '<h3>Contact driver impact</h3>'+(state.driversView==="table"?table:
       paretoChart(impact.rows,"Contact driver impact","Share of absolute impact (%)","Drivers within the 80% cutoff")))+'</section>';
 }
@@ -5041,11 +5707,12 @@ function componentPlot(links,row,relationship,evidence=false){
     for(var value of values){min=Math.min(min,value);max=Math.max(max,value);}
     var norm=Math.max(Math.abs(min),Math.abs(max))||1;
     var low=min/norm,high=max/norm;
-    if(low===high)return {at:function(){return start+span/2;},ticks:[{at:start+span/2,label:componentStat(low*norm)}]};
+    if(low===high)return {at:function(){return start+span/2;},ticks:[{at:start+span/2,label:chartNumber(low*norm,1)}]};
     var position=function(value){return start+span*(.04+.92*(value-low)/(high-low));};
+    const tickLabel=chartTickFormatter(1,(high-low)*norm/4);
     return {at:function(value){return position(value/norm);},ticks:Array.from({length:5},function(_,i){
       var value=low+(high-low)*i/4;
-      return {at:position(value),label:componentStat(value*norm)};
+      return {at:position(value),label:tickLabel(value*norm)};
     })};
   }
   var all=points.concat(fit);
@@ -5079,7 +5746,7 @@ function componentPlot(links,row,relationship,evidence=false){
   var overview=relationshipOverview(links.rows,item=>Number.isFinite(item.r)?'Descriptive comparisons':'Unavailable',context);
   return '<div id="g-component-plot"><h4>'+esc(row.label+' and '+yTitle)+'</h4>'
     +gSlideResult(gSlideTakeaway(direction,overview+'<h4>Facts</h4><p>'+n0(points.length)+' comparable weeks.</p>'+gTakeawayMeaning(meaning)+
-      '<button type="button" class="g-linkbtn" data-chapter="g-component-evidence-'+esc(row.column)+'">See this component in Evidence</button>'),
+      '<button type="button" class="g-linkbtn" data-chapter="g-component-evidence-'+esc(row.column)+'">See this component in Evidence</button>',{labels:[yTitle,...links.rows.map(item=>item.label)]}),
       observedState(xR()).componentView==="table"?values:chartLegend(legend)+chart)+'</div>';
 }
 var LEVEL_TEST_METHODS={pearson:"Pearson",spearman:"Spearman",kendall_tau_b:"Kendall’s tau-b"};
@@ -5159,7 +5826,7 @@ function metricPair(R,pair){
     +(pair.status==='descriptive'?'<h4>Next step</h4><p>Check whether the pattern also appears within individual Lines of Business.</p>':'');
   return '<div id="g-metric-pair"><h4>'+esc(ML()+' and '+pair.label)+'</h4>'
     +'<p class="muted">'+n0(pair.weeks.length)+' comparable weeks</p>'
-    +gSlideResult(gSlideTakeaway(metricPairStatus(pair),details),
+    +gSlideResult(gSlideTakeaway(metricPairStatus(pair),details,{labels:[pair.label.replace(/^Supplied /i,''),...R.insights.metric_relationships.map(item=>item.label)]}),
       pair.weeks.length?(observedState(R).relationshipView==="table"?pairedWeeklyTable(pair):componentPlot({},scatter,pair)):'')
     +'<button type="button" class="g-linkbtn" data-chapter="g-metric-evidence-'+esc(pair.id)+'">See this comparison in Evidence</button></div>';
 }
@@ -5237,7 +5904,7 @@ function metricRelationshipChanges(pair){
     var incrementUnit=pair.unit==="supplied score"?"score units":pair.unit;
     if(effect.increment===1)incrementUnit=({contacts:"contact",surveys:"survey",seconds:"second","score units":"score unit"})[incrementUnit]||incrementUnit;
     var estimate=effect.estimate/durationFactor();
-    slope='<p><strong>Descriptive slope.</strong> '+esc('A weekly change in '+pair.label.toLowerCase()+' that was '
+    slope='<p><strong>Descriptive slope.</strong> '+esc('A weekly change in '+metricSentenceCase(pair.label)+' that was '
       +componentStat(effect.increment)+' '+incrementUnit+' higher was associated with an estimated '
       +(estimate>0?'+':'')+componentStat(estimate)+' '+outcomeUnit+' difference in the weekly change in '+ml()+'.')+'</p>';
   }
@@ -5323,8 +5990,8 @@ function insComponents(I,R,evidence=false){var c=I.components;if(!c||!c.rows.len
   var facts='<h4>Facts</h4><p>'+esc(basis)+'</p>'+leaders.map(row=>'<p>'+esc(row.label+': '+displayNumber(row.lost,1)+' '+unit
     +' across '+n0(row.n)+' eligible '+noun+'.')+'</p>').join('');
   return '<section id="g-shortfalls-panel">'+reportChartControls("shortfalls",state)
-    +gSlideResult(gSlideTakeaway(message,facts),title+(state.shortfallsView==="table"?table:
-      comparisonBars(bars,row=>displayNumber(row.value,1)+' '+unit,value=>displayNumber(value,1),'Measured component shortfall',true)) )+'</section>';
+    +gSlideResult(gSlideTakeaway(message,facts,{labels:leaders.map(row=>row.label)}),title+(state.shortfallsView==="table"?table:
+      comparisonBars(bars,row=>chartNumber(row.value,1),value=>chartNumber(value,1),'Measured component shortfall ('+unit+')',true)) )+'</section>';
 }
 function componentMovementValue(value,source){
   return value===null?'—':source==='D01'?fcValue(value):componentStat(value)+(source==='D03'?' rating':' pts');
@@ -5353,7 +6020,7 @@ function componentMovementChart(m,title){
   ticks.forEach(function(value){
     var at=x(value);
     chart+='<line class="gc-grid" x1="'+at+'" x2="'+at+'" y1="5" y2="'+bottom+'"/>'
-      +'<text x="'+at+'" y="'+(bottom+15)+'" text-anchor="middle">'+esc(componentMovementValue(value,m.source))+'</text>';
+      +'<text x="'+at+'" y="'+(bottom+15)+'" text-anchor="middle">'+esc(chartNumber(value,m.source==='D01'?durationFactor():1))+'</text>';
   });
   m.rows.forEach(function(row,i){
     var y=20+i*30,before=x(row.before),after=x(row.after),sign=Math.sign(after-before),tail=after-sign*Math.min(7,Math.abs(after-before));
@@ -5364,9 +6031,9 @@ function componentMovementChart(m,title){
       +'<line class="g-movement-line" x1="'+before+'" x2="'+after+'" y1="'+y+'" y2="'+y+'"/>'
       +'<circle class="g-movement-before" cx="'+before+'" cy="'+y+'" r="4"/>'
       +(sign?'<polygon class="g-movement-after" points="'+after+','+y+' '+tail+','+(y-4)+' '+tail+','+(y+4)+'"/>':'')
-      +'<text class="g-movement-delta" x="746" y="'+(y+4)+'" text-anchor="end">'+esc(delta)+'</text></g>';
+      +'<text class="g-movement-delta" x="746" y="'+(y+4)+'" text-anchor="end">'+esc(signedChartNumber(change,m.source==='D01'?durationFactor():1))+'</text></g>';
   });
-  var axis={D01:'Component duration ('+durationUnitName(true)+')',D03:'Supplied component rating',D04:'Component score (Points)'};
+  var axis={D01:'Component duration',D03:'Supplied component rating',D04:'Component score'};
   return chart+'<text x="'+((left+right)/2)+'" y="'+(bottom+34)+'" text-anchor="middle">'+esc(axis[m.source])+'</text></svg>';
 }
 function componentMovementTable(m,title){
@@ -5431,7 +6098,7 @@ function componentMovement(R){
     +presentationScopeTitle(R,{agentGroup:m.selection.group?'Team lead '+m.selection.group:null})
     +'<div class="g-observed-filters">'+reportChartControls("movement",state)+'</div>'
     +(title.includes('selected periods')?componentMovementScope(m):'')
-    +gSlideResult(gSlideTakeaway(takeaway||m.reason||'No component had eligible values in both periods.'),
+    +gSlideResult(gSlideTakeaway(takeaway||m.reason||'No component had eligible values in both periods.','',{labels:m.rows.map(row=>row.label)}),
       state.movementView==="table"?componentMovementTable(m,title)
       :componentMovementChart(m,title))
     +'<button type="button" id="g-movement-evidence-link" class="g-linkbtn" data-chapter="g-component-movement-evidence">See comparison in Evidence</button></section>';
@@ -5461,10 +6128,11 @@ function cartWaterfall(cart,path,compact=false){
     .filter(Number.isFinite);
   if(Number.isFinite(cart.target))comparable.push(cart.target);
   var low=Math.min(...comparable),high=Math.max(...comparable);
-  var width=640,height=compact?112:150,slot=width/values.length;
+  var width=640,height=compact?112:150,gutter=Number.isFinite(cart.target)?horizontalTargetGutter(cart.target):0;
+  var edge=width-gutter,slot=edge/values.length,inset=' style="padding-inline-end:'+(100*gutter/width)+'%"';
   var x=index=>slot*(index+.5);
   var y=value=>high===low?height/2:height-15-(height-30)*(value-low)/(high-low);
-  var graph=Number.isFinite(cart.target)?'<line class="gc-target" x1="0" x2="'+width+'" y1="'+y(cart.target)+'" y2="'+y(cart.target)+'"/>':'';
+  var graph=Number.isFinite(cart.target)?'<line class="gc-target" x1="0" x2="'+edge+'" y1="'+y(cart.target)+'" y2="'+y(cart.target)+'"/>'+horizontalTargetTag(cart.target,edge,y(cart.target),edge):'';
   graph+='<line class="gc-line" x1="'+(x(0)-slot*.28)+'" x2="'+(x(0)+slot*.28)+'" y1="'+y(fitValues[0])+'" y2="'+y(fitValues[0])+'"/>';
   for(var i=1;i<fitValues.length;i++){
     var start=y(fitValues[i-1]),end=y(fitValues[i]),barLeft=x(i)-slot*.28;
@@ -5476,13 +6144,13 @@ function cartWaterfall(cart,path,compact=false){
   graph+='<path class="g-cart-check" d="M '+checkX+' '+(checkY-6)+' l 6 6 -6 6 -6 -6 Z"/>';
   return '<div class="scroll" tabindex="0" aria-label="Historical path waterfall"><figure class="g-cart-stage'+(compact?' g-cart-compact':'')
     +'" style="margin:0;--cart-columns:'+values.length+';--cart-steps:'+path.conditions.length+'">'
-    +'<div class="g-cart-labels"><strong>Fit baseline</strong><ol aria-label="Path conditions">'+path.conditions.map(function(step){
+    +'<div class="g-cart-labels"'+inset+'><strong>Fit baseline</strong><ol aria-label="Path conditions">'+path.conditions.map(function(step){
       var label=cart.features[step.feature].label;
       if(compact)return '<li><strong title="'+esc(label)+'">'+esc(label.length>22?label.slice(0,20)+'…':label)+'</strong></li>';
       return '<li><strong>'+esc(label)+'</strong><span>'+esc(cartCondition(cart,step))+'</span></li>';
     }).join('')+'</ol><strong>Historical check</strong></div>'
     +'<svg class="g-cart-plot" viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none" aria-hidden="true">'+graph+'</svg>'
-    +'<div class="g-cart-values">'+values.map(value=>'<strong>'+esc(fcValue(value))+'</strong>').join('')+'</div>'
+    +'<div class="g-cart-values"'+inset+'>'+values.map(value=>'<strong title="'+esc(fcValue(value))+'">'+esc(chartNumber(value))+'</strong>').join('')+'</div>'
     +'<figcaption>'+esc(ML())+' by cumulative split. The diamond marks the observed result for the complete path on later dates.'
     +(Number.isFinite(cart.target)?' The dashed line marks the applicable target.':'')+'</figcaption></figure></div>';
 }
@@ -5588,7 +6256,7 @@ function scenarioGlidepath(s,R){
   var references=[s.baseline,last.value,s.target].filter(Number.isFinite);
   var min=Math.min(...references),max=Math.max(...references),pad=Math.max((max-min)*.12,Number.EPSILON);
   var lo=min-pad,hi=max+pad;
-  var left=76,right=604,top=18,bottom=120;
+  var left=76,right=640-horizontalTargetGutter(s.target),top=18,bottom=120;
   function x(week){return left+(right-left)*week/last.week;}
   function y(value){return hi===lo?(top+bottom)/2:bottom-(bottom-top)*(value-lo)/(hi-lo);}
   var heading='Illustrative '+last.week+'-week glidepath';
@@ -5599,11 +6267,11 @@ function scenarioGlidepath(s,R){
     return '<circle cx="'+x(p.week)+'" cy="'+y(p.value)+'" r="3.5" fill="var(--accent)"><title>'+esc(label+': '+fcValue(p.value))+'</title></circle>'
       +runDateTick(x(p.week),bottom,label);
   }).join('');
-  return '<div><div class="g-chart-head"><strong>'+heading+'</strong><span class="muted">Equal improvement each week</span></div>'
+  return '<div><div class="g-chart-head"><strong>'+heading+'</strong><span>Equal improvement each week</span></div>'
     +'<svg class="g-chart" viewBox="0 0 640 162" role="img" aria-label="'+esc(heading+' for '+ml())+'">'+ticks
     +'<path class="g-run-axis" d="M'+left+' '+top+'V'+bottom+'H'+right+'"/>'
-    +'<text class="g-run-tick" transform="translate(14 '+((top+bottom)/2)+') rotate(-90)" text-anchor="middle">'+esc(chartMetricAxis())+'</text>'
-    +(Number.isFinite(s.target)?'<line class="gc-target" x1="'+left+'" x2="'+right+'" y1="'+y(s.target)+'" y2="'+y(s.target)+'"/><text x="'+right+'" y="'+(y(s.target)-4)+'" text-anchor="end">Target '+esc(fcValue(s.target))+'</text>':'')
+    +'<text class="g-run-tick" transform="translate(14 '+((top+bottom)/2)+') rotate(-90)" text-anchor="middle">'+esc(ML())+'</text>'
+    +(Number.isFinite(s.target)?'<line class="gc-target" x1="'+left+'" x2="'+right+'" y1="'+y(s.target)+'" y2="'+y(s.target)+'"/>'+horizontalTargetTag(s.target,right,y(s.target),right):'')
     +'<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" points="'+line+'"/>'+markers+'</svg></div>';
 }
 function insScenario(I,R,evidence=false){var s=I.scenario;if(!s||!I.constraints)return '';
@@ -5738,7 +6406,7 @@ function externalPriorityPanel(I,evidence=false){
       +'% · '+(row.priority?'Priority':'Outside the 80% priority set')+(row.unclassified?' · Needs classification':''))+'</li>').join('')+'</ul></details>':'';
   return evidence?'<h3>External priorities</h3><p>'+esc(answer)+'</p>'+facts+(rows.length?table:'')+ledger
     :rows.length?gSlideResult(gSlideTakeaway(answer,facts+gNextSteps(rows.map(row=>row.category+' · '+row.title),
-      'Confirm which baseline dates the recorded issue counts cover before raising each issue with external owners.')),table):gSlideTakeaway(answer,facts);
+      'Confirm which baseline dates the recorded issue counts cover before raising each issue with external owners.'),{labels:rows.flatMap(row=>[row.category,row.title])}),table):gSlideTakeaway(answer,facts);
 }
 function gCh4(R){
   var I=R&&R.insights;
@@ -5751,7 +6419,8 @@ function gCh4(R){
     :'Review the evidence behind the eligible recommendations. None has a positive, available priority score.',
     categoryTotals.length?'<h4>Conditional lift by category</h4><ul>'+categoryTotals.map(([name,lift])=>'<li>'
       +'<span class="g-action-category-key" aria-hidden="true" data-action-category="'+esc(ACTION_CATEGORY_STYLES[name]||'')+'"></span>'
-      +esc(name+' · '+insDifferenceSize(lift))+'</li>').join('')+'</ul>':'')
+      +esc(name+' · '+insDifferenceSize(lift))+'</li>').join('')+'</ul>':'',
+    {labels:[priority&&insActionTitle(priority),...categoryTotals.map(([name])=>name)]})
     +'<div class="g-help-actions">'+cards.map((c,index)=>insCard(c,index,I.scenario)).join('')+'</div></section>'
     :gSlideTakeaway('No playbook recommendations are available for this selection.');
   var factors=gHas(R,"factors")?'<button type="button" class="g-linkbtn" data-chapter="chapter-factors">Review the Performance Factors</button>':'';
@@ -5780,7 +6449,7 @@ function gCh5(R){
   var body=reportCard("g-evidence-guide",intro+chartScopeTitle(R,"Report dates")+notes)
     +reportCard("g-requirements-evidence",R.account_requirements?requirementsPanel(R,true):'')
     +reportCard("g-evidence-calculation",'<h3>Technical evidence</h3>'+files+xEvidence()+matchEvidence(R))
-    +reportCard("g-trend-evidence",gReportViews(R).includes("time")?(hasRecordedEvents(R)?baselineDailyEvidence(R):trendEvidence(R)):'')
+    +reportCard("g-trend-evidence",gReportViews(R).includes("time")&&gShowsPanel(R,"trend")?baselineDailyEvidence(R):'')
     +reportCard("g-recorded-events-evidence",hasRecordedEvents(R)&&gReportViews(R).includes("time")&&gShowsPanel(R,"recorded-events")?trendEvidence(R):'')
     +reportCard("g-stability-evidence",showsStability(R)?stabilityEvidence(R):'')
     +reportCard("g-volume-evidence",gReportViews(R).includes("time")&&Array.isArray(R.report_panels)&&gShowsPanel(R,"volume")?reportVolumeEvidence(R):'')
@@ -5829,8 +6498,7 @@ function gEvidenceSourceRoles(R,id){
     "g-slide-scenario":I?.scenario&&!I.scenario.blocked?[["primary","Observed KPI baseline"],["D09","Recorded controllable constraints behind the modeled lift"]]:[]
   };
   if(id==="g-slide-daily"||id==="g-slide-recorded-events"){
-    var hasEvents=id==="g-slide-recorded-events"?dailyEventSelection(R,state).events.length
-      :!hasRecordedEvents(R)&&state.events&&trendSelection(R,state).events.length;
+    var hasEvents=id==="g-slide-recorded-events"&&dailyEventSelection(R,state).events.length;
     return [["primary","Daily KPI values"],...(hasEvents?[["D08","Calendar events in the applied scope"]]:[])];
   }
   if(id==="g-slide-hourly"&&R.hourly_heatmap){
@@ -6302,6 +6970,9 @@ function gGoChapter(id,trigger){
   gNav();
 }
 function positionChartFilter(event){
+  var guide=S.modal?.guide;
+  if(guide?.classList.contains('is-open')&&(!event||!guide.lastElementChild.contains(event.target)))
+    positionChartPopover(guide.lastElementChild,guide.firstElementChild,true);
   if(!chartFilter||(event?.type==='scroll'&&chartFilter.panel.contains(event.target)))return;
   var anchor=chartFilter.trigger.getBoundingClientRect();
   if(!chartFilter.trigger.checkVisibility()||anchor.bottom<=0||anchor.top>=window.innerHeight){closeChartFilter();return;}
@@ -6317,8 +6988,8 @@ document.addEventListener("keydown",function(e){
     var arrow=step&&document.querySelector('#g-slide-navigation [data-slide-step="'+step+'"]');
     if(arrow&&!arrow.hidden){e.preventDefault();arrow.click();return;}
   }
-  if(e.key==="Escape"&&!S.modal){
-    var guide=document.querySelector("#g-report-presentation .g-guide.is-open");
+  if(e.key==="Escape"){
+    var guide=document.querySelector(".g-guide.is-open");
     if(guide){e.preventDefault();gSetGuide(guide,false,true);}
   }
 });
@@ -6461,7 +7132,6 @@ async function injectSample(){
     var qs=function(id){return ((S.plan&&S.plan.questions)||[]).find(function(q){return q.id===id;});};
     var ok=function(q){return q.options.filter(function(o){return !o.availability||o.availability==='available';}).map(function(o){return o.id;});};
     await setAnswer('goal',ok(qs('goal')));
-    var period=qs('scope_period');if(period&&period.bounds&&period.bounds.min)await setAnswer('scope_period',{start:period.bounds.min,end:period.bounds.max});
     if(qs('scope_lines_of_business'))await setAnswer('scope_lines_of_business',qs('scope_lines_of_business').options.map(function(o){return o.id;}));
     if(qs('scope_contact_types'))await setAnswer('scope_contact_types',qs('scope_contact_types').options.map(function(o){return o.id;}));
     if(qs('group_dimension'))await setAnswer('group_dimension','line_of_business');
@@ -6587,7 +7257,7 @@ document.addEventListener("click",function(e){
   if(t.dataset.guidePage!==undefined){
     var owner=t.closest(".g-guide"),forward=t.getAttribute("aria-label")==="Next guide";
     owner.dataset.page=t.dataset.guidePage;
-    gRenderGuide(owner,owner.closest(".g-question-slide"));
+    gRenderGuide(owner,gGuideSlide(owner));
     positionChartPopover(owner.lastElementChild,owner.firstElementChild,true);
     (forward?owner.lastElementChild.querySelector(".g-guide-pages button:last-child"):owner.lastElementChild.querySelector(".g-guide-pages button")).focus({preventScroll:true});
     return;
@@ -6603,6 +7273,13 @@ document.addEventListener("click",function(e){
     }
     return;
   }
+  if(t.dataset.chartLabels){
+    const result=xR(),key=t.dataset.chartLabels,chart=REPORT_CHART_CONTROLS[key],state=observedState(result);
+    (state.labels??={})[key]=!chartLabelsShown(state,key);
+    redrawObservedChart(chart.id,chart.render(result));
+    return;
+  }
+  if(t.dataset.chartReset){resetChartFilters(t);return;}
   if(t.dataset.chartView){
     var result=xR(),chart=REPORT_CHART_CONTROLS[t.dataset.chartView],state=observedState(result);
     state[chart.view]=reportViews(t.dataset.chartView,state).next[0];
@@ -6611,7 +7288,7 @@ document.addEventListener("click",function(e){
   }
   if(t.hasAttribute("data-guide-toggle")){
     var guide=t.parentElement,open=t.getAttribute("aria-expanded")!=="true";
-    var other=document.querySelector("#g-report-presentation .g-guide.is-open");
+    var other=document.querySelector(".g-guide.is-open");
     if(other&&other!==guide)gSetGuide(other,false);
     gSetGuide(guide,open,true);return;
   }
@@ -6720,7 +7397,10 @@ function renderModal(){
   }
   if(S.modal.chartMode==="focus"){
     var pane=dialog.querySelector(".g-modal-scroll-pane");
-    if(S.modal.toolbar)pane.before(S.modal.toolbar);
+    if(S.modal.toolbar){
+      if(S.modal.guide)S.modal.toolbar.append(S.modal.guide);
+      pane.before(S.modal.toolbar);
+    }
     S.modal.card.querySelectorAll(".g-table-preview").forEach(node=>node.classList.remove("g-table-preview"));
     pane.append(S.modal.card);
   }
